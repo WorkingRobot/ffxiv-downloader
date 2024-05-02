@@ -1,4 +1,4 @@
-﻿using FFXIVDownloader.Patching.ZiPatch;
+using FFXIVDownloader.Patching.ZiPatch;
 using FFXIVDownloader.Patching.ZiPatch.Util;
 using System.Text.RegularExpressions;
 
@@ -115,7 +115,9 @@ public sealed class FilteredPersistentZiPatchConfig : ZiPatchConfig, IDisposable
             try
             {
                 stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, 1 << 16);
-                Streams.Add(file.RelativePath, stream);
+                if (!Streams.TryAdd(file.RelativePath, stream))
+                    Console.WriteLine($"Failed to add stream for {file.RelativePath}");
+                return stream;
             }
             catch (IOException)
             {
