@@ -10,4 +10,4 @@ RUN dotnet publish --no-restore -o /app
 FROM mcr.microsoft.com/dotnet/runtime:8.0-alpine
 WORKDIR /app
 COPY --from=build /app .
-ENTRYPOINT ["sh", "-c", "pwd && ls -la && ./FFXIVDownloader"]
+ENTRYPOINT ["/app/FFXIVDownloader"]
