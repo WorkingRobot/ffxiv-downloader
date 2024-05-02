@@ -24,6 +24,7 @@ public static class Program
         using var config = new FilteredPersistentZiPatchConfig(output, fileRegex.IsMatch);
 
         Console.WriteLine($"Downloading patch chain for {slug}");
+
         var chain = await thaliak.GetPatchChainAsync(slug).ConfigureAwait(false);
         foreach (var version in chain.SkipWhile(v => !string.IsNullOrWhiteSpace(currentVersion) && v.VersionString != currentVersion))
         {
@@ -40,6 +41,7 @@ public static class Program
                     chunk.ApplyChunk(config, null!);
             }
         }
+
         Console.WriteLine("Done");
 
         if (Environment.GetEnvironmentVariable("GITHUB_OUTPUT") is { } githubOutput)
