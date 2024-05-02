@@ -1,5 +1,5 @@
 # Start with the .NET Core SDK image
-FROM mcr.microsoft.com/dotnet/sdk:5.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
 # Set the working directory
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN dotnet build -c Release
 RUN dotnet publish -c Release -o out
 
 # Start with a new image
-FROM mcr.microsoft.com/dotnet/runtime-deps:5.0-alpine AS runtime
+FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine AS runtime
 
 # Set the working directory
 WORKDIR /app
