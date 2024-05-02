@@ -25,10 +25,7 @@ public static class Program
             {
                 currentVersion = File.ReadAllText(Path.Combine(output, "cached-ver.txt"));
             }
-            catch (FileNotFoundException)
-            {
-                currentVersion = string.Empty;
-            }
+            catch { }
         }
 
         using var thaliak = new ThaliakClient();
