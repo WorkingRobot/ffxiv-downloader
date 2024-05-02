@@ -19,6 +19,18 @@ public static class Program
         var output = args[2];
         var fileRegex = new Regex(args[3], RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        if (string.IsNullOrWhiteSpace(currentVersion))
+        {
+            try
+            {
+                currentVersion = File.ReadAllText(Path.Combine(output, "cached-ver.txt"));
+            }
+            catch (FileNotFoundException)
+            {
+                currentVersion = string.Empty;
+            }
+        }
+
         using var thaliak = new ThaliakClient();
         using var patchClient = new PatchClient();
         using var config = new FilteredPersistentZiPatchConfig(output, fileRegex.IsMatch);
@@ -43,6 +55,8 @@ public static class Program
         }
 
         Console.WriteLine("Done");
+
+        File.WriteAllText(Path.Combine(output, "cached-ver.txt"), chain.Last().VersionString);
 
         if (Environment.GetEnvironmentVariable("GITHUB_OUTPUT") is { } githubOutput)
             Console.SetOut(new StreamWriter(githubOutput));
