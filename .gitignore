@@ -1,0 +1,8 @@
+.vs/
+obj/
+bin/
+*.user
+
+/web/target
+/web/postgres-data
+/web/.secrets.env

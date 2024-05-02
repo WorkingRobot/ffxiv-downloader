@@ -1,0 +1,34 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retrieve cache
+        id: retrieve-cache
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: exd-files-data
+
+      - name: Get cached version
+        if: steps.retrieve-cache.outputs.cache-hit == 'true'
+        run: |
+            echo "cached-version=$(cat data/cached-ver.txt)" >> $GITHUB_ENV
+
+      - name: Run downloader
+        id: downloader
+        uses: ./
+        with:
+          current-version: ${{ env.cached-version }}
+          output-path: ./data
+          file-regex: '^sqpack\/ffxiv\/0a0000\..+$'
+
+      - name: Store cached version
+        run: |
+            echo "${{ steps.downloader.outputs.latest-version }}" > data/cached-ver.txt

@@ -1,0 +1,28 @@
+name: 'FFXIV Downloader'
+description: 'Download and keep track of any files from FFXIV'
+inputs:
+  repository-slug:
+    description: 'Slug of the repository to download from. Thaliak holds a list of all repositories and their slugs. Defaults to 4e9a232b, which is the Win32 Global/JP base game.'
+    default: '4e9a232b'
+  current-version:
+    description: 'Version of the currently downloaded files.'
+    required: true
+  output-path:
+    description: 'Path to download files to. Defaults to .'
+    default: '.'
+  file-regex:
+    description: 'Regex to match files to download. Defaults to .*, which matches all files. Retroactively changing this should invalidate any cached files.'
+    default: '.*'
+outputs:
+  updated-files:
+    description: 'Semicolon separated list of files updated.'
+  latest-version:
+    description: 'Version of the repository after the update.'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.repository-slug }}
+    - ${{ inputs.current-version }}
+    - ${{ inputs.output-path }}
+    - ${{ inputs.file-regex }}
