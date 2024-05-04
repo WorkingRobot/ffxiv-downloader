@@ -19,7 +19,7 @@ public sealed class IndexClient : IDisposable
     {
         Client = new()
         {
-            BaseAddress = new("https://raw.githubusercontent.com/goatcorp/patchinfo/intl_6_48_hotfix/")
+            BaseAddress = new("https://raw.githubusercontent.com/goatcorp/patchinfo/main/")
         };
 
         JsonOptions = new(JsonSerializerDefaults.Web)
@@ -113,7 +113,7 @@ public sealed class IndexFile
 public sealed class IndexSourceFile
 {
     public string Name { get; set; }
-    public uint LastPtr { get; set; }
+    public long LastPtr { get; set; }
 
     public IndexSourceFile(BinaryReader reader)
     {
@@ -122,7 +122,7 @@ public sealed class IndexSourceFile
 
     public void FinishRead(BinaryReader reader)
     {
-        LastPtr = reader.ReadUInt32();
+        LastPtr = reader.ReadInt64();
     }
 }
 
@@ -211,6 +211,7 @@ public sealed class IndexFileStream : Stream
         {
             AutomaticDecompression = DecompressionMethods.All,
             AllowAutoRedirect = false,
+            EnableMultipleHttp2Connections = true,
         })
         {
             BaseAddress = remoteUrl
@@ -248,7 +249,7 @@ public sealed class IndexFileStream : Stream
         {
             var source = Sources[part.SourceIndex];
 
-            var parts = Target.Parts.Where(p => p.SourceIndex == part.SourceIndex);
+            var parts = Target.Parts.Where(p => p.SourceIndex == part.SourceIndex).ToArray();
 
             var rangesTask = GetRangesFromSourceAsync(source, parts);
 
@@ -288,15 +289,17 @@ public sealed class IndexFileStream : Stream
         Console.WriteLine($"Partially downloading {new Uri(Client.BaseAddress!, source.Name)}");
 
         // We can't use RangeHeaderValue because it adds a space after the comma
-        // Akamai restricts the range header size to at most 1034 bytes
+        // Akamai restricts the range header size to at most 1034 bytes from my testing,
+        // but it doesn't work sometimes, so use 1000 instead
         var ranges = new List<StringBuilder>();
         foreach (var r in parts
             .Select(p => (p.SourceOffset, p.EstimatedSourceSize))
             .GroupBy(p => p.SourceOffset)
-            .Select(g => g.MaxBy(p => p.EstimatedSourceSize)))
+            .Select(g => g.MaxBy(p => p.EstimatedSourceSize))
+            .DistinctBy(p => p.SourceOffset))
         {
             var value = $"{r.SourceOffset}-{Math.Min(source.LastPtr, r.SourceOffset + r.EstimatedSourceSize) - 1},";
-            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 1034)
+            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 1000)
             {
                 var b = new StringBuilder("bytes=");
                 b.Append(value);
@@ -308,16 +311,29 @@ public sealed class IndexFileStream : Stream
 
         var partDictionary = new ConcurrentDictionary<uint, ReadOnlyMemory<byte>>();
         var rangeTasks = new List<Task>();
-        using var sem = new SemaphoreSlim(4);
+        using var sem = new SemaphoreSlim(8);
         foreach (var range in ranges)
         {
-            await sem.WaitAsync().ConfigureAwait(false);
-            rangeTasks.Add(GetRangeFromSourceAsync(source, range.ToString()).ContinueWith(t =>
+            var r = range.ToString();
+            var t = Task.Run(async () =>
             {
-                sem.Release();
-                foreach (var (start, data) in t.Result)
-                    partDictionary.TryAdd(start, data);
-            }));
+                await sem.WaitAsync().ConfigureAwait(false);
+                
+                try
+                {
+                    var result = await GetRangeFromSourceAsync(source, r).ConfigureAwait(false);
+                    foreach (var (start, data) in result)
+                    {
+                        if (!partDictionary.TryAdd(start, data))
+                            throw new InvalidOperationException($"Duplicate part 2 {start} {r}");
+                    }
+                }
+                finally
+                {
+                    sem.Release();
+                }
+            });
+            rangeTasks.Add(t);
         }
 
         await Task.WhenAll(rangeTasks).ConfigureAwait(false);
@@ -438,20 +454,26 @@ public sealed class IndexFileStream : Stream
 
     private static async IAsyncEnumerable<((long From, long To), ReadOnlyMemory<byte>)> IterateMultipartRanges(HttpResponseMessage message)
     {
-        if (message.StatusCode == HttpStatusCode.OK)
+        if (message.StatusCode is HttpStatusCode.PartialContent or HttpStatusCode.OK)
         {
-            var arr = await message.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            yield return ((0, arr.Length), arr);
-        }
-        else if (message.StatusCode == HttpStatusCode.PartialContent)
-        {
-            var boundary = message.Content.Headers.ContentType!.Parameters.First(p => p.Name == "boundary").Value;
-            //var bytes = await message.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            //var filename = $"test{message.GetHashCode():X8}.bin";
-            //Console.WriteLine($"Writing to {filename}");
-            //await File.WriteAllBytesAsync(filename, bytes).ConfigureAwait(false);
-            //using var stream = new MemoryStream(bytes);
-            using var stream = await message.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            if (message.Content.Headers.ContentType?.MediaType != "multipart/byteranges")
+            {
+                var range = message.Content.Headers.ContentRange ?? throw new InvalidOperationException("Missing Content-Range header");
+                var arr = await message.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                yield return ((range.From!.Value, range.To!.Value + 1), arr);
+                yield break;
+            }
+
+            if (message.StatusCode == HttpStatusCode.OK)
+                throw new InvalidOperationException("Recieved OK for byte range");
+            
+            var boundary = message.Content.Headers.ContentType?.Parameters.FirstOrDefault(p => p.Name == "boundary")?.Value ??
+                throw new InvalidOperationException($"Missing boundary ({message.Content.Headers.ContentType})");
+            if (message.Content.Headers.ContentLength == 0)
+                throw new InvalidOperationException("Empty multipart response");
+
+            using var httpStream = await message.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var stream = new BufferedStream(httpStream, 1 << 20);
             using var reader = new BinaryReader(stream, Encoding.UTF8);
             string ReadLine()
             {
@@ -507,6 +529,6 @@ public sealed class IndexFileStream : Stream
             }
         }
         else
-            throw new HttpRequestException("Invalid status code for ranges", null, message.StatusCode);
+            throw new HttpRequestException($"Invalid status code for ranges ({message.StatusCode}; {message.Content.Headers.ContentType}; {message.Content.Headers.ContentLength})", null, message.StatusCode);
     }
 }
