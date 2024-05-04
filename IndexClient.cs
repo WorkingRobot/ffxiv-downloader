@@ -212,6 +212,7 @@ public sealed class IndexFileStream : Stream
             AutomaticDecompression = DecompressionMethods.All,
             AllowAutoRedirect = false,
             EnableMultipleHttp2Connections = true,
+            ResponseDrainTimeout = Timeout.InfiniteTimeSpan,
         })
         {
             BaseAddress = remoteUrl
@@ -290,7 +291,7 @@ public sealed class IndexFileStream : Stream
 
         // We can't use RangeHeaderValue because it adds a space after the comma
         // Akamai restricts the range header size to at most 1034 bytes from my testing,
-        // but it doesn't work sometimes, so use 1000 instead
+        // but it doesn't work sometimes, so use a smaller number
         var ranges = new List<StringBuilder>();
         foreach (var r in parts
             .Select(p => (p.SourceOffset, p.EstimatedSourceSize))
@@ -299,7 +300,7 @@ public sealed class IndexFileStream : Stream
             .DistinctBy(p => p.SourceOffset))
         {
             var value = $"{r.SourceOffset}-{Math.Min(source.LastPtr, r.SourceOffset + r.EstimatedSourceSize) - 1},";
-            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 1000)
+            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 500)
             {
                 var b = new StringBuilder("bytes=");
                 b.Append(value);
@@ -347,8 +348,28 @@ public sealed class IndexFileStream : Stream
         if (!request.Headers.TryAddWithoutValidation("Range", range))
             throw new ArgumentException("Invalid range", nameof(range));
 
-        using var resp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-        resp.EnsureSuccessStatusCode();
+        HttpResponseMessage? rsp = null;
+
+        for (var i = 0; i < 5; ++i)
+        {
+            try
+            {
+                rsp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                rsp.EnsureSuccessStatusCode();
+            }
+            catch (Exception e)
+            {
+                if (rsp != null)
+                    rsp.Dispose();
+                if (i == 4)
+                    throw new HttpRequestException("Failed to download range", e);
+                await Task.Delay(1000).ConfigureAwait(false);
+            }
+        }
+        if (rsp == null)
+            throw new UnreachableException();
+
+        using var resp = rsp;
 
         var partDictionary = new ConcurrentDictionary<uint, ReadOnlyMemory<byte>>();
 
