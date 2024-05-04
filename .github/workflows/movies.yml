@@ -1,4 +1,4 @@
-name: EXD Files
+name: Movies
 on:
   push:
     branches: [main]
@@ -11,16 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Retrieve cache
-        id: retrieve-cache
-        uses: actions/cache@v4
-        with:
-          path: data
-          key: exd-files-data
-
       - name: Run downloader
         id: downloader
         uses: ./
         with:
           output-path: ./data
-          file-regex: '^sqpack\/ffxiv\/0a0000\..+$'
+          file-regex: '^movie\/.+$'
