@@ -280,8 +280,22 @@ public sealed class IndexFileStream : Stream
             }
             else
             {
-                _ = SourceTasks.GetOrAdd(source, s => 
-                    GetRangesFromSourceAsync(s, Target.Parts.Where(p => p.SourceIndex == part.SourceIndex), (start, data) => sourceParts.TryAdd(start, data)));
+                void AddSource()
+                {
+                    _ = SourceTasks.GetOrAdd(source, s =>
+                    {
+                        var t = GetRangesFromSourceAsync(s, Target.Parts.Where(p => p.SourceIndex == part.SourceIndex), (start, data) => sourceParts.TryAdd(start, data));
+                        t.ContinueWith(_ => SourceTasks.TryRemove(s, out var task));
+                        t.ContinueWith(t =>
+                        {
+                            Console.WriteLine($"Failed to download {s.Name}\n{t.Exception!.Flatten()}");
+                            SourceTasks.TryRemove(s, out var task);
+                            AddSource();
+                        }, TaskContinuationOptions.OnlyOnFaulted);
+                        return t;
+                    });
+                }
+                AddSource();
                 return await GetPartAsync(part);
             }
         }
