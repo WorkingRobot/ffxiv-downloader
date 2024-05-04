@@ -215,7 +215,12 @@ public sealed class IndexFileStream : Stream
             ResponseDrainTimeout = Timeout.InfiniteTimeSpan,
         })
         {
-            BaseAddress = remoteUrl
+            BaseAddress = remoteUrl,
+            DefaultRequestHeaders =
+            {
+                { "Connection", "Keep-Alive" },
+                { "User-Agent", "FFXIV PATCH CLIENT" }
+            }
         };
         Parts = [];
     }
@@ -299,8 +304,8 @@ public sealed class IndexFileStream : Stream
             .Select(g => g.MaxBy(p => p.EstimatedSourceSize))
             .DistinctBy(p => p.SourceOffset))
         {
-            var value = $"{r.SourceOffset}-{Math.Min(source.LastPtr, r.SourceOffset + r.EstimatedSourceSize) - 1},";
-            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 500)
+            var value = $"{r.SourceOffset}-{Math.Min(source.LastPtr, r.SourceOffset + r.EstimatedSourceSize) - 1}, ";
+            if (ranges.Count == 0 || ranges[^1].Length + value.Length > 1 << 12)
             {
                 var b = new StringBuilder("bytes=");
                 b.Append(value);
@@ -344,25 +349,61 @@ public sealed class IndexFileStream : Stream
 
     private async Task<IReadOnlyDictionary<uint, ReadOnlyMemory<byte>>> GetRangeFromSourceAsync(IndexSourceFile source, string range)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, source.Name);
-        if (!request.Headers.TryAddWithoutValidation("Range", range))
-            throw new ArgumentException("Invalid range", nameof(range));
-
+        var rangeHeader = RangeHeaderValue.Parse(range);
+        
         HttpResponseMessage? rsp = null;
 
-        for (var i = 0; i < 5; ++i)
+        for (var i = 0; i < 1; ++i)
         {
+            using var request = new HttpRequestMessage(HttpMethod.Get, source.Name);
+            request.Headers.Range = rangeHeader;
+
             try
             {
-                rsp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                if (i == 0)
+                    rsp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                else
+                {
+                    //if (rangeHeader.Ranges.Count == 1)
+                    //    throw new InvalidOperationException("Failed to download range");
+                    //var halfCount = rangeHeader.Ranges.Count / 2;
+                    //var r1 = rangeHeader.Ranges.Take(halfCount);
+                    //var r2 = rangeHeader.Ranges.Skip(halfCount);
+
+                    //var r1Header = new RangeHeaderValue();
+                    //foreach (var r in r1)
+                    //    r1Header.Ranges.Add(r);
+                    //var r2Header = new RangeHeaderValue();
+                    //foreach (var r in r2)
+                    //    r2Header.Ranges.Add(r);
+
+                    //Console.WriteLine($"Splitting {source.Name} into halves of {halfCount}");
+                    //var resp1 = await GetRangeFromSourceAsync(source, r1Header.ToString()).ConfigureAwait(false);
+                    //var resp2 = await GetRangeFromSourceAsync(source, r2Header.ToString()).ConfigureAwait(false);
+                    //return resp1.Concat(resp2).ToDictionary();
+
+                    //using var c = new HttpClient(new SocketsHttpHandler()
+                    //{
+                    //    AutomaticDecompression = DecompressionMethods.All,
+                    //    AllowAutoRedirect = false,
+                    //    EnableMultipleHttp2Connections = true,
+                    //    ResponseDrainTimeout = Timeout.InfiniteTimeSpan,
+                    //})
+                    //{
+                    //    BaseAddress = Client.BaseAddress
+                    //};
+                    //rsp = await c.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                }
                 rsp.EnsureSuccessStatusCode();
             }
             catch (Exception e)
             {
                 if (rsp != null)
                     rsp.Dispose();
+                
                 if (i == 4)
                     throw new HttpRequestException("Failed to download range", e);
+                Console.WriteLine($"Retrying {source.Name}; {range}");
                 await Task.Delay(1000).ConfigureAwait(false);
             }
         }
