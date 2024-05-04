@@ -275,14 +275,13 @@ public sealed class IndexFileStream : Stream
             if (SourceTasks.ContainsKey(source))
             {
                 while (!sourceParts.ContainsKey(part.SourceOffset))
-                    await Task.Delay(500).ConfigureAwait(false);
+                    await Task.Delay(50).ConfigureAwait(false);
                 return await GetPartAsync(part);
             }
             else
             {
                 _ = SourceTasks.GetOrAdd(source, s => 
                     GetRangesFromSourceAsync(s, Target.Parts.Where(p => p.SourceIndex == part.SourceIndex), (start, data) => sourceParts.TryAdd(start, data)));
-                await Task.Delay(1000).ConfigureAwait(false);
                 return await GetPartAsync(part);
             }
         }
