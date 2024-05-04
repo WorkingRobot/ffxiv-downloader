@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -8,8 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="GraphQL.Client" Version="6.0.2" />
-    <PackageReference Include="GraphQL.Client.Serializer.SystemTextJson" Version="6.0.2" />
+    <PackageReference Include="GraphQL.Client" Version="6.0.5" />
+    <PackageReference Include="GraphQL.Client.Serializer.SystemTextJson" Version="6.0.5" />
+    <PackageReference Include="CommunityToolkit.HighPerformance" Version="8.2.2" />
   </ItemGroup>
 
 </Project>

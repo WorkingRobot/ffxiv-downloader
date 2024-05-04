@@ -1,4 +1,4 @@
-﻿using GraphQL;
+using GraphQL;
 using GraphQL.Client.Http;
 using GraphQL.Client.Serializer.SystemTextJson;
 
@@ -128,6 +128,11 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
         if (versionString.StartsWith('H'))
         {
             IsHistoric = true;
+            versionString = versionString[1..];
+        }
+        else if (versionString.StartsWith('D'))
+        {
+            IsHistoric = false;
             versionString = versionString[1..];
         }
 

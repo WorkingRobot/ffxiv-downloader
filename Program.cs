@@ -11,6 +11,7 @@ public static class Program
         if (args.Length != 4)
         {
             Console.WriteLine("Usage: FFXIVDownloader <slug> <current-version> <output-path> <file-regex>");
+            //args = ["4e9a232b", "", "data", @"^ffxiv_dx11.+$"];
             return;
         }
 
@@ -30,24 +31,61 @@ public static class Program
 
         using var thaliak = new ThaliakClient();
         using var patchClient = new PatchClient();
+        using var indexClient = new IndexClient();
         using var config = new FilteredPersistentZiPatchConfig(output, fileRegex.IsMatch);
 
         Console.WriteLine($"Downloading patch chain for {slug}");
-
         var chain = await thaliak.GetPatchChainAsync(slug).ConfigureAwait(false);
-        foreach (var version in chain.SkipWhile(v => !string.IsNullOrWhiteSpace(currentVersion) && v.VersionString != currentVersion))
+        Console.WriteLine($"Getting latest index for {slug}");
+        var latestIndex = await indexClient.GetLatestVersionAsync(slug).ConfigureAwait(false);
+        foreach (var version in chain.SkipWhile(v => latestIndex.HasValue && new ThaliakParsedVersionString(latestIndex.Value.Version) != new ThaliakParsedVersionString(v.VersionString)).SkipWhile(v => !string.IsNullOrWhiteSpace(currentVersion) && v.VersionString != currentVersion))
         {
             Console.WriteLine($"Downloading version {version.VersionString}");
-            foreach (var patch in version.Patches!)
+            if (latestIndex.HasValue && new ThaliakParsedVersionString(latestIndex.Value.Version) == new ThaliakParsedVersionString(version.VersionString))
             {
-                Console.WriteLine($"Downloading {patch.Url}");
+                Console.WriteLine("Downloading through index");
+                var index = await indexClient.GetIndexFileAsync(latestIndex.Value.Repository, latestIndex.Value.Version).ConfigureAwait(false);
+                var remoteUrl = new Uri(new Uri(version.Patches!.First().Url), ".");
 
-                using var s = await patchClient.GetPatchFileAsync(patch.Url).ConfigureAwait(false);
-                using var s2 = new BufferedStream(s, 1 << 20);
-                using var file = new ZiPatchFile(s2);
+                var targetFiles = index.TargetFiles.Where(f => fileRegex.IsMatch(f.RelativePath)).ToList();
 
-                await foreach (var chunk in file.GetChunks())
-                    chunk.ApplyChunk(config, null!);
+                var exist = targetFiles.Select(f => File.Exists(Path.Combine(output, f.RelativePath)));
+                var allFilesExist = exist.All(e => e);
+                var noFilesExist = exist.All(e => !e);
+                if (allFilesExist)
+                {
+                    Console.WriteLine("All files exist, skipping");
+                    continue;
+                }
+                if (!noFilesExist)
+                    throw new InvalidOperationException("Some files exist and some do not. This is unsupported. Please delete your cache when loosening your file regex.");
+
+                await Parallel.ForEachAsync(targetFiles, new ParallelOptions() { MaxDegreeOfParallelism = 4 }, async (file, token) =>
+                {
+                    Console.WriteLine($"Downloading {file.RelativePath}");
+                    using var s = new IndexFileStream(file, index.SourceFiles, remoteUrl);
+                    var targetPath = Path.Combine(output, file.RelativePath);
+                    if (Path.GetDirectoryName(targetPath) is { } dirName)
+                        Directory.CreateDirectory(dirName);
+                    using var f = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16);
+                    await s.CopyToAsync(f, token).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+
+                Console.WriteLine("Downloaded index");
+            }
+
+            {
+                foreach (var patch in version.Patches!)
+                {
+                    Console.WriteLine($"Downloading {patch.Url}");
+
+                    using var s = await patchClient.GetPatchFileAsync(patch.Url).ConfigureAwait(false);
+                    using var s2 = new BufferedStream(s, 1 << 20);
+                    using var file = new ZiPatchFile(s2);
+
+                    await foreach (var chunk in file.GetChunks())
+                        chunk.ApplyChunk(config, null!);
+                }
             }
         }
 
