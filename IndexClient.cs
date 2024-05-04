@@ -196,7 +196,8 @@ public sealed class IndexFileStream : Stream
     private IndexTargetFile Target { get; }
     private IReadOnlyList<IndexSourceFile> Sources { get; }
     private HttpClient Client { get; }
-    private Dictionary<IndexTargetFilePart, Task<ReadOnlyMemory<byte>>> Parts { get; }
+    private ConcurrentDictionary<IndexSourceFile, ConcurrentDictionary<uint, ReadOnlyMemory<byte>>> Parts { get; }
+    private ConcurrentDictionary<IndexSourceFile, Task> SourceTasks { get; }
     private int CurrentPartIndex { get; set; }
     private int CurrentPartOffset { get; set; }
     private ReadOnlyMemory<byte>? CurrentPartData { get; set; }
@@ -223,22 +224,13 @@ public sealed class IndexFileStream : Stream
             }
         };
         Parts = [];
+        SourceTasks = [];
     }
 
     private async Task<ReadOnlyMemory<byte>> GetPartAsync(IndexTargetFilePart part)
     {
-        if (Parts.TryGetValue(part, out var task))
-            return await task.ConfigureAwait(false);
-
-        return await GetPartAsyncInternal(part).ConfigureAwait(false);
-    }
-
-    private async Task<ReadOnlyMemory<byte>> GetPartAsyncInternal(IndexTargetFilePart part)
-    {
         if (part.IsAllZeros)
-        {
             return new byte[part.Size];
-        }
         else if (part.IsUnavailable)
             throw new InvalidOperationException("Part is unavailable");
         else if (part.IsEmpty)
@@ -255,42 +247,50 @@ public sealed class IndexFileStream : Stream
         {
             var source = Sources[part.SourceIndex];
 
-            var parts = Target.Parts.Where(p => p.SourceIndex == part.SourceIndex).ToArray();
+            if (!Parts.TryGetValue(source, out var sourceParts))
+                sourceParts = Parts[source] = [];
 
-            var rangesTask = GetRangesFromSourceAsync(source, parts);
-
-            foreach (var p in parts)
+            if (sourceParts.TryGetValue(part.SourceOffset, out var r))
             {
-                Parts.TryAdd(p, rangesTask.ContinueWith(async t =>
+                if (r.Length == 0)
+                    throw new InvalidOperationException("Part is no longer available!");
+
+                if (r.Length > part.EstimatedSourceSize)
+                    r = r[..checked((int)part.EstimatedSourceSize)];
+
+                if (part.IsDeflated)
                 {
-                    var r = t.Result[p.SourceOffset];
+                    using var stream = r.AsStream();
+                    using var inflateStream = new DeflateStream(stream, CompressionMode.Decompress);
+                    var ret = new byte[part.Size];
+                    await inflateStream.ReadExactlyAsync(ret).ConfigureAwait(false);
+                    return ret;
+                }
 
-                    if (r.Length > p.EstimatedSourceSize)
-                        r = r[..checked((int)p.EstimatedSourceSize)];
+                sourceParts.TryUpdate(part.SourceOffset, ReadOnlyMemory<byte>.Empty, r);
 
-                    if (p.IsDeflated)
-                    {
-                        using var stream = r.AsStream();
-                        using var inflateStream = new DeflateStream(stream, CompressionMode.Decompress);
-                        var ret = new byte[p.Size];
-                        await inflateStream.ReadExactlyAsync(ret).ConfigureAwait(false);
-                        return ret;
-                    }
-
-                    return r;
-                }).Unwrap());
+                return r;
             }
 
-            if (Parts.TryGetValue(part, out var task))
-                return await task.ConfigureAwait(false);
+            if (SourceTasks.ContainsKey(source))
+            {
+                while (!sourceParts.ContainsKey(part.SourceOffset))
+                    await Task.Delay(500).ConfigureAwait(false);
+                return await GetPartAsync(part);
+            }
             else
-                throw new UnreachableException();
+            {
+                _ = SourceTasks.GetOrAdd(source, s => 
+                    GetRangesFromSourceAsync(s, Target.Parts.Where(p => p.SourceIndex == part.SourceIndex), (start, data) => sourceParts.TryAdd(start, data)));
+                await Task.Delay(1000).ConfigureAwait(false);
+                return await GetPartAsync(part);
+            }
         }
         else
             throw new UnreachableException();
     }
 
-    private async Task<IReadOnlyDictionary<uint, ReadOnlyMemory<byte>>> GetRangesFromSourceAsync(IndexSourceFile source, IEnumerable<IndexTargetFilePart> parts)
+    private async Task GetRangesFromSourceAsync(IndexSourceFile source, IEnumerable<IndexTargetFilePart> parts, Action<uint, ReadOnlyMemory<byte>> onRangeRecieved)
     {
         Console.WriteLine($"Partially downloading {new Uri(Client.BaseAddress!, source.Name)}");
 
@@ -315,7 +315,6 @@ public sealed class IndexFileStream : Stream
                 ranges[^1].Append(value);
         }
 
-        var partDictionary = new ConcurrentDictionary<uint, ReadOnlyMemory<byte>>();
         var rangeTasks = new List<Task>();
         using var sem = new SemaphoreSlim(8);
         foreach (var range in ranges)
@@ -327,12 +326,7 @@ public sealed class IndexFileStream : Stream
                 
                 try
                 {
-                    var result = await GetRangeFromSourceAsync(source, r).ConfigureAwait(false);
-                    foreach (var (start, data) in result)
-                    {
-                        if (!partDictionary.TryAdd(start, data))
-                            throw new InvalidOperationException($"Duplicate part 2 {start} {r}");
-                    }
+                    await GetRangeFromSourceAsync(source, r, onRangeRecieved).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -343,84 +337,53 @@ public sealed class IndexFileStream : Stream
         }
 
         await Task.WhenAll(rangeTasks).ConfigureAwait(false);
-
-        return partDictionary;
     }
 
-    private async Task<IReadOnlyDictionary<uint, ReadOnlyMemory<byte>>> GetRangeFromSourceAsync(IndexSourceFile source, string range)
+    private async Task GetRangeFromSourceAsync(IndexSourceFile source, string range, Action<uint, ReadOnlyMemory<byte>> onRangeRecieved)
     {
         var rangeHeader = RangeHeaderValue.Parse(range);
         
         HttpResponseMessage? rsp = null;
 
-        for (var i = 0; i < 1; ++i)
+        using var request = new HttpRequestMessage(HttpMethod.Get, source.Name);
+        request.Headers.Range = rangeHeader;
+
+        try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, source.Name);
-            request.Headers.Range = rangeHeader;
+            rsp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            rsp.EnsureSuccessStatusCode();
+        }
+        catch
+        {
+            rsp?.Dispose();
+            
+            Console.WriteLine($"Retrying {source.Name}; {rangeHeader.Ranges.Count}");
 
-            try
-            {
-                if (i == 0)
-                    rsp = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-                else
-                {
-                    //if (rangeHeader.Ranges.Count == 1)
-                    //    throw new InvalidOperationException("Failed to download range");
-                    //var halfCount = rangeHeader.Ranges.Count / 2;
-                    //var r1 = rangeHeader.Ranges.Take(halfCount);
-                    //var r2 = rangeHeader.Ranges.Skip(halfCount);
+            if (rangeHeader.Ranges.Count == 1)
+                throw new InvalidOperationException("Failed to download range");
+            var halfCount = rangeHeader.Ranges.Count / 2;
+            var r1 = rangeHeader.Ranges.Take(halfCount);
+            var r2 = rangeHeader.Ranges.Skip(halfCount);
 
-                    //var r1Header = new RangeHeaderValue();
-                    //foreach (var r in r1)
-                    //    r1Header.Ranges.Add(r);
-                    //var r2Header = new RangeHeaderValue();
-                    //foreach (var r in r2)
-                    //    r2Header.Ranges.Add(r);
+            var r1Header = new RangeHeaderValue();
+            foreach (var r in r1)
+                r1Header.Ranges.Add(r);
+            var r2Header = new RangeHeaderValue();
+            foreach (var r in r2)
+                r2Header.Ranges.Add(r);
 
-                    //Console.WriteLine($"Splitting {source.Name} into halves of {halfCount}");
-                    //var resp1 = await GetRangeFromSourceAsync(source, r1Header.ToString()).ConfigureAwait(false);
-                    //var resp2 = await GetRangeFromSourceAsync(source, r2Header.ToString()).ConfigureAwait(false);
-                    //return resp1.Concat(resp2).ToDictionary();
-
-                    //using var c = new HttpClient(new SocketsHttpHandler()
-                    //{
-                    //    AutomaticDecompression = DecompressionMethods.All,
-                    //    AllowAutoRedirect = false,
-                    //    EnableMultipleHttp2Connections = true,
-                    //    ResponseDrainTimeout = Timeout.InfiniteTimeSpan,
-                    //})
-                    //{
-                    //    BaseAddress = Client.BaseAddress
-                    //};
-                    //rsp = await c.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-                }
-                rsp.EnsureSuccessStatusCode();
-            }
-            catch (Exception e)
-            {
-                if (rsp != null)
-                    rsp.Dispose();
-                
-                if (i == 4)
-                    throw new HttpRequestException("Failed to download range", e);
-                Console.WriteLine($"Retrying {source.Name}; {range}");
-                await Task.Delay(1000).ConfigureAwait(false);
-            }
+            Console.WriteLine($"Splitting into halves of {halfCount}");
+            await Task.Delay(1000).ConfigureAwait(false);
+            await GetRangeFromSourceAsync(source, r1Header.ToString(), onRangeRecieved).ConfigureAwait(false);
+            await GetRangeFromSourceAsync(source, r2Header.ToString(), onRangeRecieved).ConfigureAwait(false);
         }
         if (rsp == null)
             throw new UnreachableException();
 
         using var resp = rsp;
 
-        var partDictionary = new ConcurrentDictionary<uint, ReadOnlyMemory<byte>>();
-
         await foreach (var ((start, end), data) in IterateMultipartRanges(resp).ConfigureAwait(false))
-        {
-            if (!partDictionary.TryAdd(checked((uint)start), data))
-                throw new InvalidOperationException("Duplicate part");
-        }
-
-        return partDictionary;
+            onRangeRecieved(checked((uint)start), data);
     }
 
     public override int Read(Span<byte> buffer)
@@ -445,6 +408,7 @@ public sealed class IndexFileStream : Stream
             CurrentPartData = null;
             CurrentPartOffset = 0;
             ++CurrentPartIndex;
+            Parts.Clear();
             return partData.Length;
         }
     }
