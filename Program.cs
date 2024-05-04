@@ -71,7 +71,7 @@ public static class Program
                     await s.CopyToAsync(f, token).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
-                Console.WriteLine("Downloaded index");
+                Console.WriteLine("Downloaded index successfully");
             }
 
             {
