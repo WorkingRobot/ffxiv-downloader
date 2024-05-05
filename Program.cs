@@ -246,7 +246,7 @@ public sealed class FilteredPersistentZiPatchConfig : ZiPatchConfig, IDisposable
     public void Dispose()
     {
         foreach (var stream in Streams.Values)
-            stream.Dispose();
+            stream?.Dispose();
     }
 }
 

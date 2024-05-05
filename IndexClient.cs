@@ -239,7 +239,7 @@ public sealed class IndexFileStream : Stream
             using var stream = new MemoryStream(ret);
             using var writer = new BinaryWriter(stream);
             writer.Write(1 << 7);
-            writer.Seek(10, SeekOrigin.Begin);
+            writer.Seek(12, SeekOrigin.Begin);
             writer.Write(part.PlaceholderEntryDataUnits!.Value);
             return ret;
         }
@@ -262,6 +262,11 @@ public sealed class IndexFileStream : Stream
                 {
                     using var stream = r.AsStream();
                     using var inflateStream = new DeflateStream(stream, CompressionMode.Decompress);
+                    if (part.SplitDecodedSourceFrom != 0)
+                    {
+                        var buf = new byte[part.SplitDecodedSourceFrom];
+                        await inflateStream.ReadExactlyAsync(buf).ConfigureAwait(false);
+                    }
                     var ret = new byte[part.Size];
                     await inflateStream.ReadExactlyAsync(ret).ConfigureAwait(false);
                     return ret;
