@@ -20,6 +20,9 @@ public static class Program
         var output = args[2];
         var fileRegex = new Regex(args[3], RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        output = Directory.CreateDirectory(output).FullName;
+        Console.WriteLine($"Output directory: {output}");
+
         if (string.IsNullOrWhiteSpace(currentVersion))
         {
             try
@@ -60,14 +63,11 @@ public static class Program
                 if (!noFilesExist)
                     throw new InvalidOperationException("Some files exist and some do not. This is unsupported. Please delete your cache when loosening your file regex.");
 
-                await Parallel.ForEachAsync(targetFiles, new ParallelOptions() { MaxDegreeOfParallelism = 4 }, async (file, token) =>
+                await Parallel.ForEachAsync(targetFiles, new ParallelOptions() { MaxDegreeOfParallelism = 2 }, async (file, token) =>
                 {
                     Console.WriteLine($"Downloading {file.RelativePath}");
                     using var s = new IndexFileStream(file, index.SourceFiles, remoteUrl);
-                    var targetPath = Path.Combine(output, file.RelativePath);
-                    if (Path.GetDirectoryName(targetPath) is { } dirName)
-                        Directory.CreateDirectory(dirName);
-                    using var f = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16);
+                    using var f = config.OpenStream(new(file.RelativePath));
                     await s.CopyToAsync(f, token).ConfigureAwait(false);
                 }).ConfigureAwait(false);
 
@@ -163,6 +163,7 @@ public sealed class FilteredPersistentZiPatchConfig : ZiPatchConfig, IDisposable
         {
             try
             {
+                Console.WriteLine($"Opening file stream to {path}");
                 stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, 1 << 16);
                 if (!Streams.TryAdd(file.RelativePath, stream))
                     Console.WriteLine($"Failed to add stream for {file.RelativePath}");
