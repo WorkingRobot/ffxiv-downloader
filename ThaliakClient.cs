@@ -121,7 +121,7 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
     public int Part { get; }
     public int Revision { get; }
     public bool IsHistoric { get; }
-    public char Section { get; }
+    public string? Section { get; }
 
     public ThaliakParsedVersionString(string versionString)
     {
@@ -136,9 +136,10 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
             versionString = versionString[1..];
         }
 
-        if (char.IsAsciiLetterLower(versionString[^1]))
+        while (char.IsAsciiLetterLower(versionString[^1]))
         {
-            Section = versionString[^1];
+            Section ??= string.Empty;
+            Section = versionString[^1] + Section;
             versionString = versionString[..^1];
         }
 
@@ -177,7 +178,7 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
             return other.IsHistoric.CompareTo(IsHistoric);
 
         if (Section != other.Section)
-            return Section.CompareTo(other.Section);
+            return (Section ?? string.Empty).CompareTo(other.Section ?? string.Empty);
 
         return 0;
     }
