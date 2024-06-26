@@ -177,8 +177,15 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
         if (IsHistoric != other.IsHistoric)
             return other.IsHistoric.CompareTo(IsHistoric);
 
-        if (Section != other.Section)
-            return (Section ?? string.Empty).CompareTo(other.Section ?? string.Empty);
+        var sectionLen = Section?.Length ?? 0;
+        var otherSectionLen = other.Section?.Length ?? 0;
+        if (sectionLen != otherSectionLen)
+            return (sectionLen).CompareTo(otherSectionLen);
+
+        var section = Section ?? string.Empty;
+        var otherSection = other.Section ?? string.Empty;
+        if (section != otherSection)
+            return section.CompareTo(otherSection);
 
         return 0;
     }
