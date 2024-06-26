@@ -41,7 +41,20 @@ public static class Program
         var chain = await thaliak.GetPatchChainAsync(slug).ConfigureAwait(false);
         Console.WriteLine($"Getting latest index for {slug}");
         var latestIndex = await indexClient.GetLatestVersionAsync(slug).ConfigureAwait(false);
-        foreach (var version in chain.SkipWhile(v => latestIndex.HasValue && new ThaliakParsedVersionString(latestIndex.Value.Version) != new ThaliakParsedVersionString(v.VersionString)).SkipWhile(v => !string.IsNullOrWhiteSpace(currentVersion) && v.VersionString != currentVersion))
+        if (latestIndex.HasValue && chain.Count != 0)
+        {
+            if (new ThaliakParsedVersionString(latestIndex.Value.Version) < new ThaliakParsedVersionString(chain.First().VersionString))
+                latestIndex = null;
+        }
+        foreach (var version in chain.SkipWhile(
+            v =>
+                latestIndex.HasValue &&
+                new ThaliakParsedVersionString(latestIndex.Value.Version) != new ThaliakParsedVersionString(v.VersionString)
+            ).SkipWhile(
+            v =>
+                !string.IsNullOrWhiteSpace(currentVersion) &&
+                v.VersionString != currentVersion
+            ))
         {
             Console.WriteLine($"Downloading version {version.VersionString}");
             if (latestIndex.HasValue && new ThaliakParsedVersionString(latestIndex.Value.Version) == new ThaliakParsedVersionString(version.VersionString))

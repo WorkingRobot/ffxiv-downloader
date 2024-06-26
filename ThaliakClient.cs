@@ -192,4 +192,24 @@ public sealed record ThaliakParsedVersionString : IComparable<ThaliakParsedVersi
     {
         return HashCode.Combine(Year, Month, Day, Part, Revision, IsHistoric, Section);
     }
+
+    public static bool operator <(ThaliakParsedVersionString left, ThaliakParsedVersionString right)
+    {
+        return left is null ? right is not null : left.CompareTo(right) < 0;
+    }
+
+    public static bool operator <=(ThaliakParsedVersionString left, ThaliakParsedVersionString right)
+    {
+        return left is null || left.CompareTo(right) <= 0;
+    }
+
+    public static bool operator >(ThaliakParsedVersionString left, ThaliakParsedVersionString right)
+    {
+        return left is not null && left.CompareTo(right) > 0;
+    }
+
+    public static bool operator >=(ThaliakParsedVersionString left, ThaliakParsedVersionString right)
+    {
+        return left is null ? right is null : left.CompareTo(right) >= 0;
+    }
 }
