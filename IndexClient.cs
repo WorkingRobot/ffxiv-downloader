@@ -19,7 +19,7 @@ public sealed class IndexClient : IDisposable
     {
         Client = new()
         {
-            BaseAddress = new("https://raw.githubusercontent.com/goatcorp/patchinfo/main/")
+            BaseAddress = new("https://raw.githubusercontent.com/goatcorp/patchinfo/dt/")
         };
 
         JsonOptions = new(JsonSerializerDefaults.Web)
@@ -42,6 +42,8 @@ public sealed class IndexClient : IDisposable
         public int Ex3Revision { get; set; }
         public string Ex4 { get; set; }
         public int Ex4Revision { get; set; }
+        public string Ex5 { get; set; }
+        public int Ex5Revision { get; set; }
 
         public (string Repository, string Version)? GetBySlug(string slug) =>
             slug switch
@@ -52,6 +54,7 @@ public sealed class IndexClient : IDisposable
                 "f29a3eb2" => ("ex2", Ex2),
                 "859d0e24" => ("ex3", Ex3),
                 "1bf99b87" => ("ex4", Ex4),
+                "6cfeab11" => ("ex5", Ex5),
                 _ => null
             };
     }
@@ -86,6 +89,9 @@ public sealed class IndexClient : IDisposable
 
 public sealed class IndexFile
 {
+    private const uint Magic = 0x89AA3CD1;
+    private const uint Version = 2;
+
     public int ExpacVersion { get; }
 
     public List<IndexSourceFile> SourceFiles { get; }
@@ -94,6 +100,12 @@ public sealed class IndexFile
 
     public IndexFile(BinaryReader reader)
     {
+        if (reader.ReadUInt32() != Magic)
+            throw new InvalidOperationException("Invalid magic number");
+
+        if (reader.ReadUInt32() != Version)
+            throw new InvalidOperationException("Invalid version number");
+
         ExpacVersion = reader.ReadInt32();
 
         var sourceFileCount = reader.ReadInt32();
@@ -144,7 +156,7 @@ public sealed class IndexTargetFile
 
 public sealed class IndexTargetFilePart
 {
-    public uint Offset { get; }
+    public long Offset { get; }
     public uint SourceOffset { get; }
     public uint Size { get; }
     public bool IsDeflated { get; }
@@ -163,7 +175,7 @@ public sealed class IndexTargetFilePart
 
     public IndexTargetFilePart(BinaryReader reader)
     {
-        Offset = reader.ReadUInt32();
+        Offset = reader.ReadInt64();
         SourceOffset = reader.ReadUInt32();
 
         var sizeAndFlags = reader.ReadUInt32();

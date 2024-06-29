@@ -85,6 +85,7 @@ public static class Program
                 }).ConfigureAwait(false);
 
                 Console.WriteLine("Downloaded index successfully");
+                continue;
             }
 
             {
