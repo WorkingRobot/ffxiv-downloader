@@ -1,4 +1,5 @@
 name: 'FFXIV Downloader'
+author: WorkingRobot
 description: 'Download and keep track of any files from FFXIV'
 inputs:
   repository-slug:
@@ -26,3 +27,6 @@ runs:
     - ${{ inputs.current-version }}
     - ${{ inputs.output-path }}
     - ${{ inputs.file-regex }}
+branding:
+  color: red
+  icon: download-cloud
