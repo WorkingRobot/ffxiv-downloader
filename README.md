@@ -5,15 +5,10 @@
 <h3 align="center">Download and keep track of any files from FFXIV</h3>
 
 <div align="center">
-  [![EXD Files](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml/badge.svg)](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml)
-  [![Movies](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml/badge.svg)](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml)
-  [![Sqpack-040000](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml/badge.svg)](https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml)
+  <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml/badge.svg" alt="EXD Files"></a>
+  <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml/badge.svg" alt="Movies"></a>
+  <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml/badge.svg" alt="Sqpack-040000"></a>
 </div>
-
-- [Usage](#usage)
-- [Caching](#caching)
-- [Inputs](#inputs)
-- [Outputs](#outputs)
 
 ## Usage
 
