@@ -17,11 +17,12 @@ Here's an example build step:
 - name: Download EXD Files
   uses: WorkingRobot/ffxiv-downloader@v1
   with:
-    output-path: ${{ github.workspace }}/exd-data
+    output-path: /github/workspace/exd-data
     file-regex: '^sqpack\/ffxiv\/0a0000\..+$'
 ```
 
 `output-path` specifies exactly where the downloaded files get stored, and `file-regex` is a regex expression that matches which files must be downloaded. Here, we only want EXD/Excel related files, so we'll make sure to filter out anything that doesn't begin with `sqpack/ffxiv/0a0000`.
+**Important Note:** Do not use the `${{ github.workspace }}` variable in `output-path`. `github.workspace` maps to `/github/workspace/` in Docker actions. [This is intended behavior.](https://docs.github.com/en/actions/sharing-automations/creating-actions/creating-a-docker-container-action#accessing-files-created-by-a-container-action)
 
 ## Caching
 
@@ -41,6 +42,8 @@ Slug of the repository to download from. [Thaliak](https://thaliak.xiv.dev) hold
 
 ### `output-path`
 Path to download files to. Defaults to `.` or the current directory.
+
+**Important Note:** Do not use the `${{ github.workspace }}` variable in `output-path`. `github.workspace` maps to `/github/workspace/` in Docker actions. [This is intended behavior.](https://docs.github.com/en/actions/sharing-automations/creating-actions/creating-a-docker-container-action#accessing-files-created-by-a-container-action)
 
 ### `file-regex`
 Regex to match files to download. Defaults to `.*`, which matches all files. Retroactively changing this should invalidate any cached files.
