@@ -7,6 +7,8 @@ namespace FFXIVDownloader;
 [CliCommand(Name = "clut", Description = "Create a chain LUT file from a patch url.", Parent = typeof(MainCommand))]
 public class ChainLutCommand
 {
+    public required MainCommand Parent { get; set; }
+
     [CliOption(Required = false, Arity = CliArgumentArity.OneOrMore, Description = "The url (or file paths) of the LUT files.")]
     public required string[] Urls { get; set; }
 
@@ -21,12 +23,7 @@ public class ChainLutCommand
 
     public async Task RunAsync()
     {
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (sender, eventArgs) =>
-        {
-            cts.Cancel();
-            eventArgs.Cancel = true;
-        };
+        var token = Parent.Init();
 
         OutputPath = Directory.CreateDirectory(OutputPath).FullName;
         Log.Info($"Output Path: {OutputPath}");
@@ -36,7 +33,7 @@ public class ChainLutCommand
         ClutFile clut;
         if (BaseClut != null)
         {
-            using var httpStream = await patchClient.GetFileAsync(BaseClut, cts.Token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetFileAsync(BaseClut, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
 
             using var reader = new BinaryReader(bufferedStream);
@@ -63,7 +60,7 @@ public class ChainLutCommand
 
             var version = new ParsedVersionString(Path.GetFileNameWithoutExtension(url));
 
-            using var httpStream = await patchClient.GetFileAsync(url, cts.Token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetFileAsync(url, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var reader = new BinaryReader(bufferedStream);
 

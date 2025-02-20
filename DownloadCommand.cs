@@ -9,6 +9,8 @@ namespace FFXIVDownloader;
 [CliCommand(Description = "Download a list of files from a slug and version.", Parent = typeof(MainCommand))]
 public class DownloadCommand
 {
+    public required MainCommand Parent { get; set; }
+
     [CliOption(Required = true, Description = "The slug of the repository.")]
     public required string Slug { get; set; }
 
@@ -23,12 +25,7 @@ public class DownloadCommand
 
     public async Task RunAsync()
     {
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (sender, eventArgs) =>
-        {
-            cts.Cancel();
-            eventArgs.Cancel = true;
-        };
+        var token = Parent.Init();
 
         OutputPath = Directory.CreateDirectory(OutputPath).FullName;
         Log.Info($"Output Path: {OutputPath}");
@@ -46,7 +43,7 @@ public class DownloadCommand
 
         using var thaliak = new ThaliakClient();
 
-        var meta = await thaliak.GetRepositoryMetadataAsync(Slug, cts.Token).ConfigureAwait(false);
+        var meta = await thaliak.GetRepositoryMetadataAsync(Slug, token).ConfigureAwait(false);
         Log.Verbose($"Repository:");
         Log.Verbose($"  Slug: {Slug}");
         Log.Verbose($"  Name: {meta.Name}");
@@ -57,7 +54,7 @@ public class DownloadCommand
         Log.Info($"Downloading version {version}");
 
         Log.Verbose($"Downloading patch chain");
-        var chain = await thaliak.GetPatchChainAsync(Slug, version, cts.Token).ConfigureAwait(false);
+        var chain = await thaliak.GetPatchChainAsync(Slug, version, token).ConfigureAwait(false);
 
         var cache = await CacheMetadata.GetAsync(OutputPath).ConfigureAwait(false);
         if (cache.FilteredFiles.Any(RegexMatches))
@@ -83,7 +80,7 @@ public class DownloadCommand
             Log.Verbose($"  URL: {patch.Url}");
             Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
-            using var httpStream = await patchClient.GetFileAsync(new(patch.Url), cts.Token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetFileAsync(new(patch.Url), token).ConfigureAwait(false);
             using var patchStream = new BufferedStream(httpStream, 1 << 20);
 
             var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
@@ -94,7 +91,7 @@ public class DownloadCommand
 
             using (var file = new ZiPatchFile(httpStream))
             {
-                await foreach (var chunk in file.GetChunksAsync().WithCancellation(cts.Token).ConfigureAwait(false))
+                await foreach (var chunk in file.GetChunksAsync(token).WithCancellation(token).ConfigureAwait(false))
                 {
                     Log.Debug($"Applying chunk {chunk}");
                     await chunk.ApplyAsync(config).ConfigureAwait(false);

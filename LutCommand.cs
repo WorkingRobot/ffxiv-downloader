@@ -9,6 +9,8 @@ namespace FFXIVDownloader;
 [CliCommand(Description = "Create a LUT file from a patch url. Provide a slug or a list of urls.", Parent = typeof(MainCommand))]
 public class LutCommand
 {
+    public required MainCommand Parent { get; set; }
+
     [CliOption(Required = false, Description = "The slug of the repository.")]
     public string? Slug { get; set; }
 
@@ -29,17 +31,12 @@ public class LutCommand
 
     public async Task RunAsync()
     {
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (sender, eventArgs) =>
-        {
-            cts.Cancel();
-            eventArgs.Cancel = true;
-        };
+        var token = Parent.Init();
 
         OutputPath = Directory.CreateDirectory(OutputPath).FullName;
         Log.Info($"Output Path: {OutputPath}");
 
-        var chain = await GetChainAsync(cts.Token).ConfigureAwait(false);
+        var chain = await GetChainAsync(token).ConfigureAwait(false);
 
         for (var i = chain.Count - 1; i >= 0; --i)
         {
@@ -57,7 +54,7 @@ public class LutCommand
 
         await Parallel.ForEachAsync(chain, new ParallelOptions
         {
-            CancellationToken = cts.Token,
+            CancellationToken = token,
             MaxDegreeOfParallelism = Parallelism
         }, async (item, token) =>
         {
@@ -70,7 +67,7 @@ public class LutCommand
 
             var outPath = Path.Join(OutputPath, $"{ver:P}.lut");
 
-            using var httpStream = await patchClient.GetFileAsync(patch.Url, cts.Token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetFileAsync(patch.Url, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var patchStream = new PositionedStream(bufferedStream);
 
@@ -84,7 +81,7 @@ public class LutCommand
 
             using (var file = new ZiPatchFile(patchStream))
             {
-                await foreach (var chunk in file.GetChunksAsync(token).WithCancellation(cts.Token).ConfigureAwait(false))
+                await foreach (var chunk in file.GetChunksAsync(token).WithCancellation(token).ConfigureAwait(false))
                 {
                     Log.Debug($"Chunk {chunk}");
                     lutFile.Chunks.Add(new(chunk));
@@ -109,7 +106,7 @@ public class LutCommand
             //     Log.DebugObject(lutFile2.Chunks);
             // }
 
-            Log.Debug($"Finished {ver} ({fileSize / (double)(1 << 10):0.00} KiB)");
+            Log.Verbose($"Finished {ver} ({fileSize / (double)(1 << 10):0.00} KiB)");
         }).ConfigureAwait(false);
     }
 
