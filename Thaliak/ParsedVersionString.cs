@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace FFXIVDownloader.Thaliak;
 
-public readonly record struct ParsedVersionString : IComparable<ParsedVersionString>, IEquatable<ParsedVersionString>
+public readonly record struct ParsedVersionString : IComparable<ParsedVersionString>, IEquatable<ParsedVersionString>, IFormattable
 {
     public int Year { get; init; }
     public int Month { get; init; }
@@ -79,9 +79,9 @@ public readonly record struct ParsedVersionString : IComparable<ParsedVersionStr
     }
 
     public override string ToString() =>
-        ToString(string.Empty);
+        ToString(null, null);
 
-    public string ToString(string format)
+    public string ToString(string? format = null, IFormatProvider? formatProvider = null)
     {
         var sb = new StringBuilder();
         if (IsHistoric)
@@ -96,10 +96,8 @@ public readonly record struct ParsedVersionString : IComparable<ParsedVersionStr
         return sb.ToString();
     }
 
-    public bool Equals(ParsedVersionString other)
-    {
-        return CompareTo(other) == 0;
-    }
+    public bool Equals(ParsedVersionString other) =>
+        CompareTo(other) == 0;
 
     public override readonly int GetHashCode() =>
         HashCode.Combine(Year, Month, Day, Part, Revision, IsHistoric, Section);
