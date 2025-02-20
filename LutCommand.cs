@@ -18,6 +18,9 @@ public class LutCommand
     [CliOption(Required = false, Arity = CliArgumentArity.OneOrMore, Description = "The url (or file paths) of the patch files.")]
     public string[]? Urls { get; set; }
 
+    [CliOption(Required = false, Description = "Degree of parallelism to use when downloading patches.")]
+    public int Parallelism { get; set; } = Environment.ProcessorCount;
+
     [CliOption(Required = false, Description = "The output directory to write the LUTs to. If omitted, the current directory will be used.")]
     public string OutputPath { get; set; } = Directory.GetCurrentDirectory();
 
@@ -52,8 +55,14 @@ public class LutCommand
 
         using var patchClient = new PatchClient();
 
-        foreach (var (ver, patch) in chain)
+        await Parallel.ForEachAsync(chain, new ParallelOptions
         {
+            CancellationToken = cts.Token,
+            MaxDegreeOfParallelism = Parallelism
+        }, async (item, token) =>
+        {
+            var (ver, patch) = item;
+
             Log.Info($"Downloading patch {ver}");
             Log.Verbose($"  URL: {patch.Url}");
             if (patch.Size != 0)
@@ -75,7 +84,7 @@ public class LutCommand
 
             using (var file = new ZiPatchFile(patchStream))
             {
-                await foreach (var chunk in file.GetChunksAsync().WithCancellation(cts.Token).ConfigureAwait(false))
+                await foreach (var chunk in file.GetChunksAsync(token).WithCancellation(cts.Token).ConfigureAwait(false))
                 {
                     Log.Debug($"Chunk {chunk}");
                     lutFile.Chunks.Add(new(chunk));
@@ -101,7 +110,7 @@ public class LutCommand
             // }
 
             Log.Debug($"Finished {ver} ({fileSize / (double)(1 << 10):0.00} KiB)");
-        }
+        }).ConfigureAwait(false);
     }
 
     private async Task<List<(ParsedVersionString Version, Patch Patch)>> GetChainAsync(CancellationToken token)
