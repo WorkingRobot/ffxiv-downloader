@@ -13,17 +13,21 @@ public sealed class PatchClient : IDisposable
             AutomaticDecompression = DecompressionMethods.All,
             AllowAutoRedirect = false
         });
+        Client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "FFXIV PATCH CLIENT");
     }
 
-    public async Task<Stream> GetPatchFileAsync(string url)
+    public async Task<Stream> GetFileAsync(string url, CancellationToken token = default)
     {
-        var response = await Client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        if (File.Exists(url))
+            return File.OpenRead(url);
+        else
+        {
+            var response = await Client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+        }
     }
 
-    public void Dispose()
-    {
+    public void Dispose() =>
         Client.Dispose();
-    }
 }

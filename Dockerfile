@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 WORKDIR /source
 
 COPY *.csproj .
@@ -7,7 +7,7 @@ RUN dotnet restore
 COPY . .
 RUN dotnet publish --no-restore -o /app
 
-FROM mcr.microsoft.com/dotnet/runtime:8.0-alpine
+FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine
 ARG UID=1001
 
 RUN addgroup -S ffxiv && adduser -S ffxiv -G ffxiv --uid ${UID}

@@ -1,0 +1,210 @@
+using System.Collections.Frozen;
+using System.Net;
+using System.Text;
+using GraphQL;
+using GraphQL.Client.Http;
+using GraphQL.Client.Serializer.SystemTextJson;
+
+namespace FFXIVDownloader.Thaliak;
+
+public sealed class ThaliakClient : IDisposable
+{
+    private GraphQLHttpClient Client { get; }
+
+    private static FrozenDictionary<string, FrozenDictionary<ParsedVersionString, ParsedVersionString?>> Overrides { get; } =
+        new Dictionary<string, FrozenDictionary<ParsedVersionString, ParsedVersionString?>>
+        {
+            {
+                "4e9a232b", new Dictionary<ParsedVersionString, ParsedVersionString?>{
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000z") },
+                    { new("2017.06.06.0000.0001"), new("H2017.06.06.0000.0001m") },
+                    { new("H2017.06.06.0000.0001a"), null },
+                }.ToFrozenDictionary()
+            },
+            {
+                "6b936f08", new Dictionary<ParsedVersionString, ParsedVersionString?>{
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000d") }
+                }.ToFrozenDictionary()
+            },
+            {
+                "f29a3eb2", new Dictionary<ParsedVersionString, ParsedVersionString?>{
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000e") }
+                }.ToFrozenDictionary()
+            },
+            {
+                "859d0e24", new Dictionary<ParsedVersionString, ParsedVersionString?>{
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000g") }
+                }.ToFrozenDictionary()
+            },
+            {
+                "1bf99b87", new Dictionary<ParsedVersionString, ParsedVersionString?>{
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000i") }
+                }.ToFrozenDictionary()
+            },
+        }.ToFrozenDictionary();
+
+    public ThaliakClient()
+    {
+        var serializer = new SystemTextJsonSerializer();
+        serializer.Options.Converters.Add(new ParsedVersionString.JsonConverter());
+        Client = new("https://thaliak.xiv.dev/graphql/2022-08-14", serializer);
+    }
+
+    public async Task<Repository> GetRepositoryMetadataAsync(string slug, CancellationToken token = default)
+    {
+        return (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
+        {
+            Query = @"
+            query($repoId: String!) {
+                repository(slug: $repoId) {
+                    name
+                    description
+                    latestVersion {
+                        versionString
+                    }
+                }
+            }",
+            Variables = new
+            {
+                repoId = slug
+            }
+        }, token).ConfigureAwait(false)).Data.Repository;
+    }
+
+    public async Task<List<(ParsedVersionString Version, Patch Patch)>> GetPatchChainAsync(string slug, ParsedVersionString version, CancellationToken token = default)
+    {
+        var versions = (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
+        {
+            Query = @"
+            query($repoId: String!) {
+                repository(slug: $repoId) {
+                    versions {
+                        versionString
+                        isActive
+                        prerequisiteVersions {
+                            versionString
+                        }
+                        patches {
+                            url
+                            size
+                        }
+                    }
+                }
+            }",
+            Variables = new
+            {
+                repoId = slug
+            }
+        }, token).ConfigureAwait(false)).Data.Repository.Versions!.ToDictionary(v => v.VersionString);
+
+        var overrides = Overrides.GetValueOrDefault(slug);
+
+        var ret = new List<(ParsedVersionString, Patch)>();
+
+        var nextVer = versions.GetValueOrDefault(version);
+        while (nextVer != null)
+        {
+            ArgumentOutOfRangeException.ThrowIfNotEqual(nextVer.Patches.Count, 1, nameof(nextVer.Patches.Count));
+            var patch = nextVer.Patches[0];
+            ret.Add((nextVer.VersionString, patch));
+
+            if (overrides?.TryGetValue(nextVer.VersionString, out var @override) ?? false)
+            {
+                if (@override == null)
+                    break;
+                nextVer = versions.GetValueOrDefault(@override.Value);
+                ArgumentNullException.ThrowIfNull(nextVer);
+                continue;
+            }
+
+            nextVer = nextVer.PrerequisiteVersions
+                .Where(prereq => !ret.Any(v => v.Item1 == prereq.VersionString))
+                .Select(prereq => versions.GetValueOrDefault(prereq.VersionString) ?? throw new ArgumentNullException(nameof(prereq)))
+                .Where(prereq => !nextVer.IsActive || prereq.IsActive)
+                .OrderByDescending(prereq => prereq.VersionString)
+                .FirstOrDefault();
+        }
+
+        ret.Reverse();
+        return ret;
+    }
+
+    public async Task<string> GetGraphvizTreeAsync(string slug)
+    {
+        var versions = (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
+        {
+            Query = @"
+            query($repoId: String!) {
+                repository(slug: $repoId) {
+                    versions {
+                        versionString
+                        isActive
+                        prerequisiteVersions {
+                            versionString
+                        }
+                        patches {
+                            url
+                            size
+                        }
+                    }
+                }
+            }",
+            Variables = new
+            {
+                repoId = slug
+            }
+        }).ConfigureAwait(false)).Data.Repository.Versions!;
+
+        var treeList = versions.OrderByDescending(x => x.VersionString).ToList();
+        var overrides = Overrides.GetValueOrDefault(slug);
+        var b = new StringBuilder();
+        b.AppendLine("digraph {");
+        foreach (var (idx, ver) in treeList.Index())
+        {
+            var exists = await DoesPatchExist(ver.Patches[0]).ConfigureAwait(false);
+            var (fill, font) = (exists, ver.IsActive) switch
+            {
+                (true, true) => ("lightgreen", "black"),
+                (true, false) => ("yellow", "black"),
+                (false, true) => ("red", "white"),
+                (false, false) => ("darkred", "white")
+            };
+            b.AppendLine($"  Idx{idx} [ label = \"{ver.VersionString.ToString("P")}\" style = filled fillcolor = {fill} fontcolor = {font} ]");
+            var prereqs = ver.PrerequisiteVersions?.Select(v => v.VersionString) ?? [];
+            prereqs = prereqs.Where(prereq => prereq > ver.VersionString);
+            if (overrides?.TryGetValue(ver.VersionString, out var @override) ?? false)
+                prereqs = @override.HasValue ? [@override.Value] : [];
+            foreach (var (listIdx, prereq) in prereqs.OrderDescending().Index())
+            {
+                var prereqIdx = treeList.FindIndex(v => v.VersionString == prereq);
+                if (prereqIdx == -1)
+                    continue;
+                b.Append($"  Idx{idx} -> Idx{prereqIdx}");
+                if (listIdx != 0)
+                    b.Append(" [ color = red ]");
+                b.AppendLine();
+            }
+        }
+        b.AppendLine("}");
+        return b.ToString();
+    }
+
+    private async Task<bool> DoesPatchExist(Patch patch)
+    {
+        var resp = await Client.HttpClient.SendAsync(new(HttpMethod.Head, patch.Url), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        return resp.StatusCode switch
+        {
+            HttpStatusCode.OK => true,
+            HttpStatusCode.NotFound => false,
+            _ => throw new InvalidOperationException($"Unexpected status code: {resp.StatusCode}")
+        };
+    }
+
+    public void Dispose()
+    {
+        Client.Dispose();
+    }
+}
+
+public sealed record RepositoryResponse(Repository Repository);
+

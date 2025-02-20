@@ -2,7 +2,9 @@
 obj/
 bin/
 *.user
+/*.sln
 
-/web/target
-/web/postgres-data
-/web/.secrets.env
+out-test/
+*.patch
+*.lut
+*.clut
