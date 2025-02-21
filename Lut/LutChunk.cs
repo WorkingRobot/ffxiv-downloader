@@ -36,7 +36,7 @@ public sealed class LutChunk
         writer.Write((byte)Type);
         writer.Write(Names.Count);
         foreach (var name in Names)
-            writer.Write(nameMap.IndexOf(name));
+            writer.Write(nameMap.BinarySearch(name));
         writer.Write(Data.Length);
         writer.Write(Data);
     }

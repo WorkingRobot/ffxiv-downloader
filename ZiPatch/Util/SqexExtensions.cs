@@ -1,7 +1,9 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
+
+using System.Text;
 
 namespace FFXIVDownloader.ZiPatch.Util;
 
@@ -34,7 +36,7 @@ public static class SqexExtensions
         await stream.WipeFromOffset(length, offset).ConfigureAwait(false);
         stream.Position = offset;
 
-        using var file = new BinaryWriter(stream, System.Text.Encoding.Default, true);
+        using var file = new BinaryWriter(stream, Encoding.UTF8, true);
 
         // FileBlockHeader - the 0 writes are technically unnecessary but are in for illustrative purposes
 

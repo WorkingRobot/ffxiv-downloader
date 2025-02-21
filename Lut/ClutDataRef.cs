@@ -1,8 +1,10 @@
 using FFXIVDownloader.Thaliak;
+using System.Collections.Frozen;
+using System.Runtime.CompilerServices;
 
 namespace FFXIVDownloader.Lut;
 
-public sealed class ClutDataRef
+public struct ClutDataRef
 {
     public enum RefType : byte
     {
@@ -12,9 +14,9 @@ public sealed class ClutDataRef
     }
 
     public RefType Type { get; init; }
-    public long Offset { get; init; }
-    public long Length { get; init; }
-    public long? BlockCount { get; init; }
+    public long Offset { get; set; }
+    public int Length { get; set; }
+    public int? BlockCount { get; init; }
     public ClutPatchRef? Patch { get; init; }
 
     public ClutDataRef()
@@ -24,29 +26,50 @@ public sealed class ClutDataRef
         Length = 0;
     }
 
-    public ClutDataRef(BinaryReader reader, ReadOnlySpan<ClutPatchRef> patchMap)
+    public ClutDataRef(BinaryReader reader, ReadOnlySpan<ParsedVersionString> patchMap, ref long patchOffset)
     {
         Type = (RefType)reader.ReadByte();
-        Offset = reader.ReadInt64();
-        Length = reader.ReadInt64();
         if (Type == RefType.EmptyBlock)
-            BlockCount = reader.ReadInt64();
+            BlockCount = reader.ReadInt32();
         if (Type == RefType.Patch)
-            Patch = patchMap[reader.ReadInt32()];
+            Patch = new(reader, patchMap, ref patchOffset);
     }
 
-    public void Write(BinaryWriter writer, ReadOnlySpan<ClutPatchRef> patchMap)
+    public void ReadOffset(BinaryReader reader, ref long lastOffset)
+    {
+        Offset = reader.Read7BitEncodedInt64() + lastOffset;
+        lastOffset = Offset;
+    }
+
+    public void ReadLength(BinaryReader reader)
+    {
+        Length = reader.Read7BitEncodedInt();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly void Write(BinaryWriter writer, FrozenDictionary<ParsedVersionString, int> patchMap, ref long patchOffset)
     {
         writer.Write((byte)Type);
-        writer.Write(Offset);
-        writer.Write(Length);
         if (Type == RefType.EmptyBlock)
             writer.Write(BlockCount!.Value);
         if (Type == RefType.Patch)
-            writer.Write(patchMap.IndexOf(Patch!.Value));
+            Patch!.Value.Write(writer, patchMap, ref patchOffset);
     }
 
-    public static ClutDataRef FromRawPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, long length)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly void WriteOffset(BinaryWriter writer, ref long lastOffset)
+    {
+        writer.Write7BitEncodedInt64(Offset - lastOffset);
+        lastOffset = Offset;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly void WriteLength(BinaryWriter writer)
+    {
+        writer.Write7BitEncodedInt(Length);
+    }
+
+    public static ClutDataRef FromRawPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, int length)
     {
         return new ClutDataRef
         {
@@ -58,12 +81,12 @@ public sealed class ClutDataRef
                 Patch = patch,
                 Offset = patchOffset,
                 Size = length,
-                DecompressedSize = null
+                IsCompressed = false
             }
         };
     }
 
-    public static ClutDataRef FromZeros(long fileOffset, long length)
+    public static ClutDataRef FromZeros(long fileOffset, int length)
     {
         return new ClutDataRef
         {
@@ -74,8 +97,10 @@ public sealed class ClutDataRef
         };
     }
 
-    public static (ClutDataRef, ClutDataRef) FromEmpty(long fileOffset, long length)
+    public static (ClutDataRef, ClutDataRef?) FromEmpty(long fileOffset, int length)
     {
+        if ((length & 0x7F) != 0)
+            throw new ArgumentException("Length must be a multiple of 128", nameof(length));
         var empty = new ClutDataRef
         {
             Type = RefType.EmptyBlock,
@@ -84,17 +109,21 @@ public sealed class ClutDataRef
             BlockCount = length >> 7,
             Patch = null
         };
-        var zero = new ClutDataRef
+        ClutDataRef? zero = null;
+        if (length != 0)
         {
-            Type = RefType.Zero,
-            Offset = fileOffset + 24,
-            Length = length - 24,
-            Patch = null
-        };
+            zero = new ClutDataRef
+            {
+                Type = RefType.Zero,
+                Offset = fileOffset + 24,
+                Length = length - 24,
+                Patch = null
+            };
+        }
         return (empty, zero);
     }
 
-    public static ClutDataRef FromCompressedPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, long compressedLength, long length)
+    public static ClutDataRef FromCompressedPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, int compressedLength, int length)
     {
         return new ClutDataRef
         {
@@ -106,7 +135,7 @@ public sealed class ClutDataRef
                 Patch = patch,
                 Offset = patchOffset,
                 Size = compressedLength,
-                DecompressedSize = length
+                IsCompressed = true
             }
         };
     }

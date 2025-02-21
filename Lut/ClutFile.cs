@@ -1,6 +1,8 @@
+using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Text;
 using DotNext.Collections.Generic;
 using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
@@ -32,30 +34,76 @@ public sealed class ClutFile
         Folders = [];
         Files = [];
 
-        using Stream? decompStream = Header.Compression switch
+        var compressedData = new byte[Header.CompressedSize];
+        reader.BaseStream.ReadExactly(compressedData);
+
+        byte[] decompressedData;
+        if (Header.Compression == CompressType.None)
+            decompressedData = compressedData;
+        else
         {
-            CompressType.None => null,
-            CompressType.Zlib => new ZLibStream(reader.BaseStream, CompressionMode.Decompress, true),
-            CompressType.Brotli => new BrotliStream(reader.BaseStream, CompressionMode.Decompress, true),
-            _ => throw new LutException($"Unsupported compression: {Header.Compression}")
-        };
-        var decompReader = new BinaryReader(decompStream ?? reader.BaseStream);
+            decompressedData = new byte[Header.DecompressedSize];
+            switch (Header.Compression)
+            {
+                case CompressType.Zlib:
+                    {
+                        using var decompressor = new ZLibStream(new MemoryStream(compressedData), CompressionMode.Decompress);
+                        decompressor.ReadExactly(decompressedData);
+                        break;
+                    }
+                case CompressType.Brotli:
+                    {
+                        BrotliDecoder.TryDecompress(compressedData, decompressedData, out var written);
+                        if (written != decompressedData.Length)
+                            throw new LutException($"Failed to decompress data: {written} != {decompressedData.Length}");
+                        break;
+                    }
+                default:
+                    throw new LutException($"Unsupported compression: {Header.Compression}");
+            }
+        }
+
+        using var decompReader = new BinaryReader(new MemoryStream(decompressedData));
         ReadDecompressedData(decompReader);
     }
 
     public void Write(BinaryWriter writer)
     {
+        var decompressedData = WriteDecompressedData();
+
+        ReadOnlyMemory<byte> compressedData;
+        if (Header.Compression == CompressType.None)
+            compressedData = decompressedData;
+        else
+        {
+            switch (Header.Compression)
+            {
+                case CompressType.Zlib:
+                    {
+                        using var s = new MemoryStream();
+                        using (var compressor = new ZLibStream(s, CompressionLevel.Optimal, true))
+                            compressor.Write(decompressedData.Span);
+                        compressedData = s.GetBuffer().AsMemory()[..(int)s.Length];
+                        break;
+                    }
+                case CompressType.Brotli:
+                    {
+                        var compData = new byte[BrotliEncoder.GetMaxCompressedLength(decompressedData.Length)];
+                        if (!BrotliEncoder.TryCompress(decompressedData.Span, compData, out var written))
+                            throw new LutException($"Failed to compress data: {written} != {decompressedData.Length}");
+                        compressedData = compData.AsMemory()[..written];
+                        break;
+                    }
+                default:
+                    throw new LutException($"Unsupported compression: {Header.Compression}");
+            }
+            Header.CompressedSize = compressedData.Length;
+        }
+
+        Header.DecompressedSize = decompressedData.Length;
         Header.Write(writer);
 
-        using Stream? compStream = Header.Compression switch
-        {
-            CompressType.None => null,
-            CompressType.Zlib => new ZLibStream(writer.BaseStream, CompressionLevel.Optimal, true),
-            CompressType.Brotli => new BrotliStream(writer.BaseStream, CompressionLevel.Optimal, true),
-            _ => throw new LutException($"Unsupported compression: {Header.Compression}")
-        };
-        var compWriter = new BinaryWriter(compStream ?? writer.BaseStream);
-        WriteDecompressedData(compWriter);
+        writer.Write(compressedData.Span);
     }
 
     private void ReadDecompressedData(BinaryReader reader)
@@ -64,11 +112,6 @@ public sealed class ClutFile
         var patches = new ParsedVersionString[patchLen];
         for (var i = 0; i < patchLen; i++)
             patches[i] = new(reader.ReadString());
-
-        var patchRefLen = reader.ReadInt32();
-        var patchRefs = new ClutPatchRef[patchRefLen];
-        for (var i = 0; i < patchRefLen; i++)
-            patchRefs[i] = new(reader, patches);
 
         var folderLen = reader.ReadInt32();
         var folders = new string[folderLen];
@@ -83,24 +126,28 @@ public sealed class ClutFile
 
         var fileData = new ClutFileData[fileLen];
         for (var i = 0; i < fileLen; i++)
-            fileData[i] = new(reader, patchRefs);
+            fileData[i] = new(reader, patches);
 
         Folders = [.. folders];
         Files = fileNames.Zip(fileData).ToDictionary();
     }
 
-    private void WriteDecompressedData(BinaryWriter writer)
+    private ReadOnlyMemory<byte> WriteDecompressedData()
     {
-        var patchRefs = Files.Values.SelectMany(f => f.Data).Where(d => d.Patch.HasValue).Select(d => d.Patch!.Value).Distinct().ToArray();
-        var patches = patchRefs.Select(p => p.Patch).Distinct().Order().ToArray();
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
 
-        writer.Write(patches.Length);
-        foreach (var patch in patches)
-            writer.Write(patch.ToString("P"));
+        var patchSet = new HashSet<ParsedVersionString>();
+        foreach (var file in Files.Values)
+            foreach (var data in file.Data)
+                if (data.Patch.HasValue)
+                    patchSet.Add(data.Patch.Value.Patch);
+        var i = 0;
+        var patches = patchSet.ToFrozenDictionary(v => v, v => i++);
 
-        writer.Write(patchRefs.Length);
-        foreach (var patchRef in patchRefs)
-            patchRef.Write(writer, patches);
+        writer.Write(patches.Count);
+        foreach (var patch in patches.OrderBy(k => k.Value))
+            writer.Write(patch.Key.ToString("P"));
 
         writer.Write(Folders.Count);
         foreach (var folder in Folders)
@@ -110,7 +157,9 @@ public sealed class ClutFile
         foreach (var path in Files.Keys)
             writer.Write(path);
         foreach (var file in Files.Values)
-            file.Write(writer, patchRefs);
+            file.Write(writer, patches);
+
+        return stream.GetBuffer().AsMemory()[..(int)stream.Length];
     }
 
     public void ApplyLut(ParsedVersionString patch, LutChunk chunk)
@@ -173,24 +222,28 @@ public sealed class ClutFile
     private void ApplyLut(ParsedVersionString patch, SqpkAddData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
-        file.Data.Add(ClutDataRef.FromRawPatchData(patch, chunk.BlockDataPatchOffset, chunk.BlockOffset, chunk.BlockNumber));
-        file.Data.Add(ClutDataRef.FromZeros(chunk.BlockOffset + chunk.BlockNumber, chunk.BlockDeleteNumber));
+        if (chunk.BlockNumber > 0)
+            file.Data.Add(ClutDataRef.FromRawPatchData(patch, chunk.BlockDataPatchOffset, chunk.BlockOffset, checked((int)chunk.BlockNumber)));
+        if (chunk.BlockDeleteNumber > 0)
+            file.Data.Add(ClutDataRef.FromZeros(chunk.BlockOffset + chunk.BlockNumber, checked((int)chunk.BlockDeleteNumber)));
     }
 
     private void ApplyLut(SqpkDeleteData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
-        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, chunk.BlockOffset);
+        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, checked((int)chunk.BlockNumber));
         file.Data.Add(empty);
-        file.Data.Add(zero);
+        if (zero is { } zeroBlock)
+            file.Data.Add(zeroBlock);
     }
 
     private void ApplyLut(SqpkExpandData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
-        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, chunk.BlockOffset);
+        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, checked((int)chunk.BlockNumber));
         file.Data.Add(empty);
-        file.Data.Add(zero);
+        if (zero is { } zeroBlock)
+            file.Data.Add(zeroBlock);
     }
 
     private void ApplyLut(ParsedVersionString patch, SqpkFile chunk)

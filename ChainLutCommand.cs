@@ -67,14 +67,15 @@ public class ChainLutCommand
 
         foreach (var (ver, patch) in chain)
         {
-            Log.Info($"Processing {ver}");
-
             var url = patch.Url;
             // .patch is usually because we got the patch url from Thaliak
             if (Path.GetExtension(url) == ".patch")
-                url = Path.Join(BasePath, $"{Path.GetFileNameWithoutExtension(url)}.lut");
+                url = Path.Join(BasePath, $"{ver:P}.lut");
             else if (!Path.IsPathRooted(url))
                 url = Path.Join(BasePath, url);
+
+            Log.Info($"Processing {ver}");
+            Log.Verbose($"  URL: {url}");
 
             using var httpStream = await patchClient.GetFileAsync(url, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
@@ -86,7 +87,7 @@ public class ChainLutCommand
 
             var fileName = $"{ver:P}.clut";
             var outPath = Path.Join(OutputPath, fileName);
-            Log.Debug($"Writing to {fileName}");
+            Log.Verbose($"Writing to {fileName}");
 
             long fileSize;
             using (var clutStream = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.Read))
@@ -96,7 +97,7 @@ public class ChainLutCommand
                 fileSize = clutStream.Length;
             }
 
-            Log.Debug($"Finished {fileName} ({fileSize / (double)(1 << 10):0.00} KiB)");
+            Log.Info($"Finished {fileName} ({fileSize / (double)(1 << 10):0.00} KiB)");
 
             //Log.DebugObject(clut);
         }
