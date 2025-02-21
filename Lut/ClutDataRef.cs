@@ -1,3 +1,5 @@
+using FFXIVDownloader.Thaliak;
+
 namespace FFXIVDownloader.Lut;
 
 public sealed class ClutDataRef
@@ -44,7 +46,7 @@ public sealed class ClutDataRef
             writer.Write(patchMap.IndexOf(Patch!.Value));
     }
 
-    public static ClutDataRef FromRawPatchData(string patch, long patchOffset, long fileOffset, long length)
+    public static ClutDataRef FromRawPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, long length)
     {
         return new ClutDataRef
         {
@@ -92,7 +94,7 @@ public sealed class ClutDataRef
         return (empty, zero);
     }
 
-    public static ClutDataRef FromCompressedPatchData(string patch, long patchOffset, long fileOffset, long compressedLength, long length)
+    public static ClutDataRef FromCompressedPatchData(ParsedVersionString patch, long patchOffset, long fileOffset, long compressedLength, long length)
     {
         return new ClutDataRef
         {

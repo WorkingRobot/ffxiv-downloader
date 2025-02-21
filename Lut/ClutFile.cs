@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using DotNext.Collections.Generic;
+using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
 using FFXIVDownloader.ZiPatch.Chunk;
 using FFXIVDownloader.ZiPatch.Chunk.SqpkCommand;
@@ -60,9 +61,9 @@ public sealed class ClutFile
     private void ReadDecompressedData(BinaryReader reader)
     {
         var patchLen = reader.ReadInt32();
-        var patches = new string[patchLen];
+        var patches = new ParsedVersionString[patchLen];
         for (var i = 0; i < patchLen; i++)
-            patches[i] = reader.ReadString();
+            patches[i] = new(reader.ReadString());
 
         var patchRefLen = reader.ReadInt32();
         var patchRefs = new ClutPatchRef[patchRefLen];
@@ -95,7 +96,7 @@ public sealed class ClutFile
 
         writer.Write(patches.Length);
         foreach (var patch in patches)
-            writer.Write(patch);
+            writer.Write(patch.ToString("P"));
 
         writer.Write(patchRefs.Length);
         foreach (var patchRef in patchRefs)
@@ -112,7 +113,7 @@ public sealed class ClutFile
             file.Write(writer, patchRefs);
     }
 
-    public void ApplyLut(string patch, LutChunk chunk)
+    public void ApplyLut(ParsedVersionString patch, LutChunk chunk)
     {
         using var dataStream = new MemoryStream(chunk.Data, false);
         using var reader = new BinaryReader(dataStream);
@@ -163,13 +164,13 @@ public sealed class ClutFile
     private void ApplyLut(DeleteDirectoryChunk chunk) =>
         Folders.Remove(NormalizePath(chunk.DirName));
 
-    private void ApplyLut(string patch, SqpkHeader chunk)
+    private void ApplyLut(ParsedVersionString patch, SqpkHeader chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
         file.Data.Add(ClutDataRef.FromRawPatchData(patch, chunk.HeaderDataPatchOffset, chunk.HeaderKind == SqpkHeader.TargetHeaderKind.Version ? 0 : SqpkHeader.HEADER_SIZE, SqpkHeader.HEADER_SIZE));
     }
 
-    private void ApplyLut(string patch, SqpkAddData chunk)
+    private void ApplyLut(ParsedVersionString patch, SqpkAddData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
         file.Data.Add(ClutDataRef.FromRawPatchData(patch, chunk.BlockDataPatchOffset, chunk.BlockOffset, chunk.BlockNumber));
@@ -192,7 +193,7 @@ public sealed class ClutFile
         file.Data.Add(zero);
     }
 
-    private void ApplyLut(string patch, SqpkFile chunk)
+    private void ApplyLut(ParsedVersionString patch, SqpkFile chunk)
     {
         switch (chunk.Operation)
         {

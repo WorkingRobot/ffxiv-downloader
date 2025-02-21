@@ -1,3 +1,4 @@
+using System.Net;
 using DotMake.CommandLine;
 using FFXIVDownloader.Lut;
 using FFXIVDownloader.Thaliak;
@@ -36,7 +37,7 @@ public class LutCommand
         OutputPath = Directory.CreateDirectory(OutputPath).FullName;
         Log.Info($"Output Path: {OutputPath}");
 
-        var chain = await GetChainAsync(token).ConfigureAwait(false);
+        var chain = await GetChainAsync(Urls, Slug, Version, token).ConfigureAwait(false);
 
         for (var i = chain.Count - 1; i >= 0; --i)
         {
@@ -65,8 +66,6 @@ public class LutCommand
             if (patch.Size != 0)
                 Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
-            var outPath = Path.Join(OutputPath, $"{ver:P}.lut");
-
             using var httpStream = await patchClient.GetFileAsync(patch.Url, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var patchStream = new PositionedStream(bufferedStream);
@@ -88,7 +87,8 @@ public class LutCommand
                 }
             }
 
-            var fileName = Path.GetFileName(outPath);
+            var fileName = $"{ver:P}.lut";
+            var outPath = Path.Join(OutputPath, fileName);
             Log.Debug($"Writing to {fileName}");
 
             long fileSize;
@@ -110,11 +110,11 @@ public class LutCommand
         }).ConfigureAwait(false);
     }
 
-    private async Task<List<(ParsedVersionString Version, Patch Patch)>> GetChainAsync(CancellationToken token)
+    public static async Task<List<(ParsedVersionString Version, Patch Patch)>> GetChainAsync(string[]? urls, string? slug, string? version, CancellationToken token)
     {
-        if (Urls != null && Urls.Length > 0)
+        if (urls != null && urls.Length > 0)
         {
-            return [.. Urls.Select(url =>
+            return [.. urls.Select(url =>
             {
                 var version = new ParsedVersionString(Path.GetFileNameWithoutExtension(url));
                 var patch = new Patch
@@ -126,22 +126,22 @@ public class LutCommand
             })];
         }
 
-        ArgumentException.ThrowIfNullOrWhiteSpace(Slug);
+        ArgumentException.ThrowIfNullOrWhiteSpace(slug);
 
         using var thaliak = new ThaliakClient();
 
-        var meta = await thaliak.GetRepositoryMetadataAsync(Slug, token).ConfigureAwait(false);
+        var meta = await thaliak.GetRepositoryMetadataAsync(slug, token).ConfigureAwait(false);
         Log.Verbose($"Repository:");
-        Log.Verbose($"  Slug: {Slug}");
+        Log.Verbose($"  Slug: {slug}");
         Log.Verbose($"  Name: {meta.Name}");
         Log.Verbose($"  Description: {meta.Description}");
         Log.Verbose($"  Latest Version: {meta.LatestVersion?.VersionString}");
 
-        var version = Version != null ? new ParsedVersionString(Version) : meta.LatestVersion!.VersionString;
-        Log.Info($"Using version {version}");
+        var parsedVersion = version != null ? new ParsedVersionString(version) : meta.LatestVersion!.VersionString;
+        Log.Info($"Using version {parsedVersion}");
 
         Log.Verbose($"Downloading patch chain");
-        var chain = await thaliak.GetPatchChainAsync(Slug, version, token).ConfigureAwait(false);
+        var chain = await thaliak.GetPatchChainAsync(slug, parsedVersion, token).ConfigureAwait(false);
 
         return chain;
     }
