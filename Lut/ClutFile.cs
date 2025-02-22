@@ -162,11 +162,6 @@ public sealed class ClutFile
         return stream.GetBuffer().AsMemory()[..(int)stream.Length];
     }
 
-    public void FilterIntervals()
-    {
-        Parallel.ForEach(Files.Values, f => f.FilterIntervals());
-    }
-
     public void RemoveOverlaps()
     {
         Parallel.ForEach(Files.Values, f => f.RemoveOverlaps());

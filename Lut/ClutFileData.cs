@@ -47,83 +47,21 @@ public sealed class ClutFileData
             data.WriteLength(writer);
     }
 
-    public void FilterIntervals()
-    {
-        List<int> removals = [];
-        List<(long Start, long End)> intervals = [];
-        var comparer = Comparer<(long Start, long End)>.Create((i, v) => i.Start.CompareTo(v.Start));
-        bool IsMasked(long start, long end) =>
-            intervals.Any(i => i.Start <= start && i.End >= end);
-        bool AddInterval(long start, long end)
-        {
-            if (IsMasked(start, end))
-                return false;
-
-            // Merge intervals together if needed
-            var idx = intervals.BinarySearch((start, end), comparer);
-            if (idx < 0)
-                idx = ~idx;
-
-            if (idx > 0 && intervals[idx - 1].End >= start)
-            {
-                idx--;
-                start = Math.Min(start, intervals[idx].Start);
-                end = Math.Max(end, intervals[idx].End);
-                intervals.RemoveAt(idx);
-            }
-
-            var mergeStart = idx;
-            var mergeCount = 0;
-            while (idx < intervals.Count && intervals[idx].Start <= end)
-            {
-                start = Math.Min(start, intervals[idx].Start);
-                end = Math.Max(end, intervals[idx].End);
-                idx++;
-                mergeCount++;
-            }
-
-            if (mergeCount > 0)
-                intervals.RemoveRange(mergeStart, mergeCount);
-
-            intervals.Insert(mergeStart, (start, end));
-            return true;
-        }
-
-        for (var i = Data.Count - 1; i >= 0; --i)
-        {
-            if (!AddInterval(Data[i].Offset, Data[i].End))
-                removals.Add(i);
-        }
-
-        RemoveMultiple(Data, ((IEnumerable<int>)removals).Reverse());
-    }
-
     private static Comparer<ClutDataRef> StartComparer { get; } = Comparer<ClutDataRef>.Create((a, b) => a.Offset.CompareTo(b.Offset));
     private static Comparer<ClutDataRef> EndComparer { get; } = Comparer<ClutDataRef>.Create((a, b) => a.End.CompareTo(b.End));
 
     private static void AdjustInPlace(List<ClutDataRef> intervals, ClutDataRef newInterval)
     {
-        // First, find the first index where an interval might overlap newInterval.
-        var n = intervals.Count;
-        //var startIndex = 0;
-        //while (startIndex < n && intervals[startIndex].End <= newInterval.Offset)
-        //    startIndex++;
-        int startIndex;
-        {
-            var dummyForEnd = new ClutDataRef
+        var startIndex = intervals.BinarySearch(new ClutDataRef
             {
                 Offset = newInterval.Offset,
                 Length = 1
-            };
-            startIndex = intervals.BinarySearch(dummyForEnd, EndComparer);
+            }, EndComparer);
             if (startIndex < 0)
                 startIndex = ~startIndex;
-        }
 
-        // We'll also use a temporary list for any new intervals created by splitting.
         List<ClutDataRef> splits = [];
 
-        // Process overlapping intervals starting at startIndex.
         var i = startIndex;
         while (i < intervals.Count && intervals[i].Offset < newInterval.End)
         {
@@ -132,7 +70,7 @@ public sealed class ClutFileData
             // Case 1: Current interval extends before newInterval: create left split.
             if (curr.Offset < newInterval.Offset)
             {
-                // Replace the current interval's end with newInterval.Start.
+                // Replace the current interval's end with newInterval.Offset.
                 intervals[i] = ClutDataRef.FromSliceInterval(in curr, curr.Offset, newInterval.Offset);
                 if (curr.End > newInterval.End)
                 {
@@ -158,12 +96,6 @@ public sealed class ClutFileData
             i++;
         }
 
-        // Now, insert the new interval into the proper position.
-        // (Assuming you want to keep it alongside the other intervals.)
-        //var insertIndex = startIndex;
-        // Use binary search manually if needed.
-        //while (insertIndex < intervals.Count && intervals[insertIndex].Offset < newInterval.Offset)
-        //    insertIndex++;
         var insertIndex = intervals.BinarySearch(newInterval, StartComparer);
         if (insertIndex < 0)
             insertIndex = ~insertIndex;
@@ -172,18 +104,9 @@ public sealed class ClutFileData
         // Insert any splits that were created.
         foreach (var s in splits)
         {
-            // Find the insertion index for each split piece.
             var idx = intervals.BinarySearch(s, StartComparer);
             if (idx < 0)
                 idx = ~idx;
-            else
-            {
-                if (intervals[idx] == s)
-                {
-                    Log.Warn("Duplicate split interval");
-                    continue;
-                }
-            }
             intervals.Insert(idx, s);
         }
     }
@@ -197,6 +120,7 @@ public sealed class ClutFileData
     }
 
     // Prints if there is any overlap between any blocks
+    [Conditional("DEBUG")]
     public void VerifyOverlaps(string prefix)
     {
         Debug.Assert(Data.Order(EndComparer).SequenceEqual(Data), "Intervals are unordered by end");
@@ -221,7 +145,6 @@ public sealed class ClutFileData
 
         RemoveMultiple(Data, removals);
         VerifyOverlaps("Zeros Overlap!");
-
     }
 
     // Indices must be ordered in ascending order
