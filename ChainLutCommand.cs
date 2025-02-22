@@ -1,6 +1,6 @@
 using DotMake.CommandLine;
 using FFXIVDownloader.Lut;
-using FFXIVDownloader.Thaliak;
+using System.Diagnostics;
 
 namespace FFXIVDownloader;
 
@@ -84,6 +84,16 @@ public class ChainLutCommand
             var lutFile = new LutFile(reader);
             foreach (var chunk in lutFile.Chunks)
                 clut.ApplyLut(ver, chunk);
+
+            var n = Stopwatch.StartNew();
+            //Log.Verbose("Filtering");
+            //clut.FilterIntervals();
+            Log.Verbose("Optimizing");
+            clut.RemoveOverlaps();
+            Log.Verbose("Zeroing");
+            clut.WipeZeros();
+            n.Stop();
+            Log.Verbose($"Optimized in {n.Elapsed.TotalSeconds:0.00}s");
 
             var fileName = $"{ver:P}.clut";
             var outPath = Path.Join(OutputPath, fileName);
