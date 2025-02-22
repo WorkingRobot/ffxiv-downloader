@@ -1,10 +1,11 @@
 using FFXIVDownloader.Thaliak;
 using System.Collections.Frozen;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace FFXIVDownloader.Lut;
 
-public struct ClutDataRef
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public struct ClutDataRef : IEquatable<ClutDataRef>
 {
     public enum RefType : byte
@@ -23,6 +24,9 @@ public struct ClutDataRef : IEquatable<ClutDataRef>
     public ClutPatchRef? Patch { get; init; }
 
     public readonly long End => Offset + Length;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string DebuggerDisplay => $"{Offset:X8} - {End:X8} ({Type})";
 
     public ClutDataRef()
     {
