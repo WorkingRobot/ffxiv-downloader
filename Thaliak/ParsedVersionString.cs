@@ -14,6 +14,8 @@ public readonly record struct ParsedVersionString : IComparable<ParsedVersionStr
     public bool IsHistoric { get; init; }
     public string? Section { get; init; }
 
+    public static readonly ParsedVersionString Epoch = new("2012.01.01.0000.0000");
+
     public ParsedVersionString(string versionString)
     {
         if (versionString.StartsWith('H'))

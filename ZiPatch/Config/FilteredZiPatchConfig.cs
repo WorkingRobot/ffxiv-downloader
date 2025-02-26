@@ -1,4 +1,4 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
@@ -11,41 +11,46 @@ public sealed class FilteredZiPatchConfig<T>(T @base, Predicate<string> filter, 
 {
     public T Base { get; } = @base;
     private Predicate<string> Filter { get; } = filter;
+    private SemaphoreSlim Lock { get; } = new(1);
 
     private readonly HashSet<string> filteredFiles = [.. alreadyFilteredFiles ?? []];
 
-    public IReadOnlySet<string> FilteredFiles => filteredFiles;
+    public IReadOnlySet<string> FilteredFiles => new HashSet<string>(filteredFiles);
 
-    public override Task<Stream> OpenStream(string path)
+    public override async Task<ITargetFile> OpenFile(string path)
     {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
         if (!Filter(path))
         {
             filteredFiles.Add(path);
-            return Task.FromResult<Stream>(new BlackHoleStream());
+            return new BlackHoleTargetFile();
         }
 
-        return Base.OpenStream(path);
+        return await Base.OpenFile(path).ConfigureAwait(false);
     }
 
     public override Task CreateDirectory(string path) =>
         Base.CreateDirectory(path);
 
-    public override Task DeleteFile(string path)
+    public override async Task DeleteFile(string path)
     {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
         if (!Filter(path))
         {
             filteredFiles.Remove(path);
-            return Task.CompletedTask;
+            return;
         }
 
-        return Base.DeleteFile(path);
+        await Base.DeleteFile(path).ConfigureAwait(false);
     }
 
     public override Task DeleteDirectory(string path) =>
         Base.DeleteDirectory(path);
 
-    public override Task DeleteExpansion(ushort expansionId, Predicate<string>? shouldKeep = null)
+    public override async Task DeleteExpansion(ushort expansionId, Predicate<string>? shouldKeep = null)
     {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
+
         shouldKeep ??= ShouldKeep;
         bool NewShouldKeep(string path)
         {
@@ -54,7 +59,7 @@ public sealed class FilteredZiPatchConfig<T>(T @base, Predicate<string> filter, 
                 filteredFiles.Remove(path);
             return !(filtered && !shouldKeep(path));
         }
-        return Base.DeleteExpansion(expansionId, NewShouldKeep);
+        await Base.DeleteExpansion(expansionId, NewShouldKeep).ConfigureAwait(false);
     }
 
     public override ValueTask DisposeAsync() =>

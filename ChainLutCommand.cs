@@ -1,5 +1,6 @@
 using DotMake.CommandLine;
 using FFXIVDownloader.Lut;
+using FFXIVDownloader.Thaliak;
 using System.Diagnostics;
 
 namespace FFXIVDownloader;
@@ -9,14 +10,17 @@ public class ChainLutCommand
 {
     public required MainCommand Parent { get; set; }
 
-    [CliOption(Required = false, Description = "The slug of the repository.")]
-    public string? Slug { get; set; }
+    [CliOption(Required = true, Description = "The slug of the repository.")]
+    public required string Slug { get; set; }
 
     [CliOption(Required = false, Description = "The version to use from the slug. If blank, the latest version will be used.")]
     public string? Version { get; set; }
 
     [CliOption(Required = false, Description = "The base path of the LUT files. Can be a file path or a url fragment.")]
     public string? BasePath { get; set; }
+
+    [CliOption(Required = false, Description = "The base URL to provide for future consumers of the .clut to use to resolve .patch URLs.")]
+    public string? BasePatchUrl { get; set; }
 
     [CliOption(Required = false, Arity = CliArgumentArity.OneOrMore, Description = "The url (or file paths) of the LUT files.")]
     public string[]? Urls { get; set; }
@@ -48,20 +52,21 @@ public class ChainLutCommand
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
 
             using var reader = new BinaryReader(bufferedStream);
-            clut = new(reader)
-            {
-                Header = new ClutHeader
-                {
-                    Compression = Compression
-                }
-            };
+            clut = new(reader);
+            clut.Header.Compression = Compression;
+            clut.Header.Repository = Slug;
+            if (!string.IsNullOrWhiteSpace(BasePatchUrl))
+                clut.Header.BasePatchUrl = BasePatchUrl;
         }
         else
             clut = new()
             {
                 Header = new ClutHeader
                 {
-                    Compression = Compression
+                    Compression = Compression,
+                    Repository = Slug,
+                    Version = ParsedVersionString.Epoch,
+                    BasePatchUrl = BasePatchUrl
                 }
             };
 
@@ -81,17 +86,15 @@ public class ChainLutCommand
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var reader = new BinaryReader(bufferedStream);
 
+            clut.Header.Repository = Slug;
+            clut.Header.Version = ver;
             var lutFile = new LutFile(reader);
             foreach (var chunk in lutFile.Chunks)
                 clut.ApplyLut(ver, chunk);
 
-            var n = Stopwatch.StartNew();
-            //Log.Verbose("Filtering");
-            //clut.FilterIntervals();
             Log.Verbose("Optimizing");
+            var n = Stopwatch.StartNew();
             clut.RemoveOverlaps();
-            Log.Verbose("Zeroing");
-            clut.WipeZeros();
             n.Stop();
             Log.Verbose($"Optimized in {n.Elapsed.TotalSeconds:0.00}s");
 

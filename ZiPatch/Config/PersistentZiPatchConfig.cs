@@ -1,30 +1,36 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
 
-using DotMake.CommandLine;
 using FFXIVDownloader.ZiPatch.Util;
 
 namespace FFXIVDownloader.ZiPatch.Config;
 
 public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
 {
-    private Dictionary<string, FileStream> Streams { get; } = [];
+    private Dictionary<string, PersistentTargetFile> Files { get; } = [];
+    private SemaphoreSlim Lock { get; } = new(1);
 
     public string GamePath { get; } = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gamePath));
-    public IReadOnlyCollection<string> OpenedStreams => Streams.Keys;
+    public IReadOnlyCollection<string> OpenedStreams => Files.Keys;
 
     private const int STREAM_OPEN_WAIT_MS = 1000;
-    private const int STREAM_OPEN_TRIES = 5;
+    private const int STREAM_OPEN_TRIES = 1;
 
-    private string GetPath(string filePath) => Path.Join(GamePath, filePath);
-
-    public override async Task<Stream> OpenStream(string path)
+    private string GetPath(string filePath)
     {
+        return Path.Join(GamePath, filePath);
+    }
+
+    public override async Task<ITargetFile> OpenFile(string path)
+    {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
+
         path = GetPath(path);
-        if (Streams.TryGetValue(path, out var stream))
-            return stream;
+
+        if (Files.TryGetValue(path, out var file))
+            return file;
 
         if (Path.GetDirectoryName(path) is { } dirName)
             Directory.CreateDirectory(dirName);
@@ -34,20 +40,18 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
         {
             try
             {
-                stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, 1 << 16);
-                Streams.Add(path, stream);
-                return stream;
+                file = new(path);
+                Files.Add(path, file);
+                return file;
             }
             catch (IOException)
             {
-                if (tries == 0)
+                if (--tries == 0)
                     throw;
 
                 await Task.Delay(STREAM_OPEN_WAIT_MS).ConfigureAwait(false);
             }
-        } while (0 < --tries);
-
-        throw new FileNotFoundException($"Could not find file {path}");
+        } while (true);
     }
 
     public override Task CreateDirectory(string path)
@@ -58,9 +62,11 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
 
     public override async Task DeleteFile(string path)
     {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
+
         path = GetPath(path);
-        if (Streams.Remove(path, out var stream))
-            await stream.DisposeAsync().ConfigureAwait(false);
+        if (Files.Remove(path, out var stream))
+            stream.Dispose();
         File.Delete(path);
     }
 
@@ -72,6 +78,8 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
 
     public override async Task DeleteExpansion(ushort expansionId, Predicate<string>? shouldKeep = null)
     {
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
+
         shouldKeep ??= ShouldKeep;
 
         var expansionFolder = SqexExtensions.GetExpansionFolder(expansionId);
@@ -85,8 +93,8 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
                 {
                     if (!shouldKeep(file))
                     {
-                        if (Streams.Remove(file, out var stream))
-                            await stream.DisposeAsync().ConfigureAwait(false);
+                        if (Files.Remove(file, out var stream))
+                            stream.Dispose();
                         File.Delete(file);
                     }
                 }
@@ -96,8 +104,10 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
 
     public override async ValueTask DisposeAsync()
     {
-        foreach (var stream in Streams.Values)
-            await stream.DisposeAsync().ConfigureAwait(false);
-        Streams.Clear();
+        using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
+
+        foreach (var stream in Files.Values)
+            stream.Dispose();
+        Files.Clear();
     }
 }

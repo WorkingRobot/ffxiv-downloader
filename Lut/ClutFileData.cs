@@ -1,8 +1,6 @@
-using DotNext;
 using FFXIVDownloader.Thaliak;
 using System.Collections.Frozen;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -132,19 +130,6 @@ public sealed class ClutFileData
                 Log.Warn($"{prefix} {prev.Offset}; {prev.Length} ({prev.Type}) and {curr.Offset}; {curr.Length} ({curr.Type})");
             p = curr;
         }
-    }
-
-    public void WipeZeros()
-    {
-        var removals = new List<int>();
-        for (var i = 0; i < Data.Count; i++)
-        {
-            if (Data[i].Type == ClutDataRef.RefType.Zero)
-                removals.Add(i);
-        }
-
-        RemoveMultiple(Data, removals);
-        VerifyOverlaps("Zeros Overlap!");
     }
 
     // Indices must be ordered in ascending order

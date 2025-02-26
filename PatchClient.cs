@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 
 namespace FFXIVDownloader;
 
@@ -11,7 +11,8 @@ public sealed class PatchClient : IDisposable
         Client = new(new SocketsHttpHandler
         {
             AutomaticDecompression = DecompressionMethods.All,
-            AllowAutoRedirect = false
+            AllowAutoRedirect = false,
+            EnableMultipleHttp2Connections = true,
         });
         Client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "FFXIV PATCH CLIENT");
     }

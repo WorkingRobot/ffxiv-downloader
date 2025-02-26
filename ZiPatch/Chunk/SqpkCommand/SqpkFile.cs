@@ -1,4 +1,4 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
@@ -96,14 +96,17 @@ public class SqpkFile : SqpkChunk, ISqpkChunk<SqpkFile>
         switch (Operation)
         {
             case OperationKind.AddFile:
-                var fileStream = await config.OpenStream(TargetFile.GetPath(config.Platform)).ConfigureAwait(false);
+                var fileStream = await config.OpenFile(TargetFile.GetPath(config.Platform)).ConfigureAwait(false);
 
                 if (FileOffset == 0)
-                    fileStream.SetLength(0);
+                    await fileStream.TruncateAsync().ConfigureAwait(false);
 
-                fileStream.Position = FileOffset;
+                var offset = FileOffset;
                 foreach (var block in CompressedData!)
-                    await block.DecompressIntoAsync(fileStream).ConfigureAwait(false);
+                {
+                    await block.DecompressIntoAsync(fileStream, offset).ConfigureAwait(false);
+                    offset += block.DataSize;
+                }
 
                 break;
 

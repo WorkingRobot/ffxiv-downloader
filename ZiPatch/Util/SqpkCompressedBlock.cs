@@ -1,12 +1,14 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
 
 using System.IO.Compression;
-using CommunityToolkit.HighPerformance;
+using System.Net.Http.Headers;
 using DotNext;
+using DotNext.IO;
 using FFXIVDownloader.ZiPatch.Chunk;
+using FFXIVDownloader.ZiPatch.Config;
 
 namespace FFXIVDownloader.ZiPatch.Util;
 
@@ -20,8 +22,6 @@ public class SqpkCompressedBlock
 
     public long DataBlockPatchOffset { get; }
     public byte[] DataBlock { get; }
-
-    private const int COPY_BUFFER_SIZE = 81920;
 
     public SqpkCompressedBlock(BinaryReader reader)
     {
@@ -56,17 +56,21 @@ public class SqpkCompressedBlock
         DataBlock = null!;
     }
 
-    public async ValueTask DecompressIntoAsync(Stream outStream)
+    public async ValueTask DecompressIntoAsync(ITargetFile file, long offset)
     {
         ReadOnlyMemory<byte> block = DataBlock.AsMemory();
-        using var blockStream = block.AsStream();
         if (IsCompressed)
         {
-            await using var stream = new DeflateStream(blockStream, CompressionMode.Decompress);
-            await stream.CopyToAsync(outStream, COPY_BUFFER_SIZE).ConfigureAwait(false);
+            var uncompData = new byte[DataSize];
+            using (var ms = new MemoryStream(uncompData))
+            using (var stream = new DeflateStream(block.AsStream(), CompressionMode.Decompress))
+            {
+                await stream.CopyToAsync(ms).ConfigureAwait(false);
+            }
+            await file.WriteAsync(uncompData, offset).ConfigureAwait(false);
         }
         else
-            await blockStream.CopyToAsync(outStream, COPY_BUFFER_SIZE).ConfigureAwait(false);
+            await file.WriteAsync(block, offset).ConfigureAwait(false);
     }
 
     public void WriteLUT(BinaryWriter writer)

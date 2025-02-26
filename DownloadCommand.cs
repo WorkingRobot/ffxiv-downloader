@@ -1,8 +1,10 @@
-using System.Text.RegularExpressions;
 using DotMake.CommandLine;
+using FFXIVDownloader.Lut;
+using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
 using FFXIVDownloader.ZiPatch.Config;
-using FFXIVDownloader.Thaliak;
+using System.Runtime.ConstrainedExecution;
+using System.Text.RegularExpressions;
 
 namespace FFXIVDownloader;
 
@@ -17,11 +19,17 @@ public class DownloadCommand
     [CliOption(Required = false, Description = "The version to download. If blank, the latest version will be downloaded.")]
     public string? Version { get; set; }
 
-    [CliOption(Required = false, Arity = CliArgumentArity.ZeroOrMore, Description = "The file regexes to download. If omitted, all files will be downloaded.")]
-    public string[] Files { get; set; } = [];
+    [CliOption(Required = false, Arity = CliArgumentArity.OneOrMore, Description = "The file regexes to download. If omitted, all files will be downloaded.")]
+    public string[] Files { get; set; } = [".*"];
 
     [CliOption(Required = false, Description = "The output directory to download the files to. If omitted, the current directory will be used.")]
     public string OutputPath { get; set; } = Directory.GetCurrentDirectory();
+
+    [CliOption(Required = false, Description = "The CLUT directory to use. If omitted, the patches will be downloaded without one.")]
+    public string? ClutPath { get; set; }
+
+    [CliOption(Required = false, Description = "Degree of parallelism to use when applying patches.")]
+    public int Parallelism { get; set; } = Environment.ProcessorCount;
 
     public async Task RunAsync()
     {
@@ -30,16 +38,7 @@ public class DownloadCommand
         OutputPath = Directory.CreateDirectory(OutputPath).FullName;
         Log.Info($"Output Path: {OutputPath}");
 
-        if (Files.Length == 0)
-            Files = [".*"];
-
-        var regexes = Files.Select(f => new Regex(f, RegexOptions.Compiled | RegexOptions.IgnoreCase)).ToArray();
-        bool RegexMatches(string path) =>
-            regexes.Any(
-                r =>
-                    r.Match(path) is { Success: true, Value.Length: var len } &&
-                    len == path.Length
-            );
+        Regexes = Files.Select(f => new Regex(f, RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase)).ToArray();
 
         using var thaliak = new ThaliakClient();
 
@@ -60,10 +59,12 @@ public class DownloadCommand
         if (cache.FilteredFiles.Any(RegexMatches))
             throw new InvalidOperationException("Some files were filtered out from previous patches. Please delete the output directory and try again.");
 
+        var installedVersion = ParsedVersionString.Epoch;
         while (chain.Count > 0)
         {
             if (cache.InstalledVersions.Contains(chain[0].Version.ToString("P")))
             {
+                installedVersion = chain[0].Version;
                 Log.Info($"Skipping patch {chain[0].Version}");
                 chain.RemoveAt(0);
             }
@@ -71,9 +72,92 @@ public class DownloadCommand
                 break;
         }
 
+        using var patchClient = new PatchClient();
+
+        if (!string.IsNullOrWhiteSpace(ClutPath))
+            await TryDownloadFromClut(patchClient, installedVersion, chain, cache, token).ConfigureAwait(false);
+        else
+            await TryDownloadFromRemote(patchClient, chain, cache, token).ConfigureAwait(false);
+    }
+
+    private Regex[]? Regexes { get; set; }
+    private bool RegexMatches(string path) =>
+        Regexes!.Any(
+            r =>
+                r.Match(path) is { Success: true, Value.Length: var len } &&
+                len == path.Length
+        );
+
+    private async Task TryDownloadFromClut(PatchClient patchClient, ParsedVersionString installedVersion, List<(ParsedVersionString Version, Patch Patch)> chain, CacheMetadata cache, CancellationToken token)
+    {
+        if (chain.Count == 0)
+            return;
+
+        var latestVersion = chain[^1].Version;
+
+        if (latestVersion == installedVersion)
+            return;
+
+        var baseUrl = chain[^1].Patch.Url;
+        baseUrl = baseUrl[..(baseUrl.LastIndexOf('/') + 1)];
+
+        ClutFile? installedClut = null;
+        if (installedVersion > ParsedVersionString.Epoch)
+        {
+            using var stream = await patchClient.GetFileAsync($"{ClutPath}/{installedVersion:P}.clut", token).ConfigureAwait(false);
+            using var reader = new BinaryReader(stream);
+            installedClut = new(reader);
+        }
+
+        ClutFile latestClut;
+        {
+            using var stream = await patchClient.GetFileAsync($"{ClutPath}/{latestVersion:P}.clut", token).ConfigureAwait(false);
+            using var reader = new BinaryReader(stream);
+            latestClut = new(reader);
+        }
+
+        ClutDiff diff = installedClut != null ? new(installedClut, latestClut) : new(latestClut);
+
+        diff.AddedFiles.Keys.Where(f => !RegexMatches(f)).ToList().ForEach(f => diff.AddedFiles.Remove(f));
+        diff.RemovedFiles.Where(f => !RegexMatches(f)).ToList().ForEach(f => diff.RemovedFiles.Remove(f));
+
+        var writeSize = 0L;
+        foreach (var d in diff.AddedFiles.Values)
+            foreach (var p in d)
+                writeSize += p.Length;
+
+        var downloadSize = diff.AddedFiles.Values
+            .SelectMany(
+                r => r
+                    .Where(p => p.Type is ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch)
+                    .Select(p => p.Patch!.Value)
+            )
+            .Distinct()
+            .Sum(d => (long)d.Size);
+
+        Log.Info($"Total Write Size: {writeSize / (double)(1 << 30):0.00} GiB");
+        Log.Info($"Approx. Download Size: {downloadSize / (double)(1 << 30):0.00} GiB");
+
+        await using var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
+            new(OutputPath),
+            RegexMatches,
+            cache.FilteredFiles
+        );
+        using (var patcher = new ClutPatcher(diff, Parallelism, baseUrl))
+            await patcher.ApplyAsync(config, token).ConfigureAwait(false);
+
+        cache.InstalledVersions.AddRange(chain.Select(v => v.Version.ToString("P")));
+        cache.FilteredFiles.Clear();
+        cache.FilteredFiles.AddRange(config.FilteredFiles);
+        Log.Debug($"Writing out cache");
+        await cache.WriteAsync(OutputPath).ConfigureAwait(false);
+        Log.Verbose($"Installed version {latestVersion}");
+    }
+
+    private async Task TryDownloadFromRemote(PatchClient patchClient, List<(ParsedVersionString Version, Patch Patch)> chain, CacheMetadata cache, CancellationToken token)
+    {
         Log.Info($"Total Size: {chain.Sum(p => p.Patch.Size) / (double)(1 << 30):0.00} GiB");
 
-        using var patchClient = new PatchClient();
         foreach (var (ver, patch) in chain)
         {
             Log.Info($"Downloading patch {ver}");
@@ -83,7 +167,7 @@ public class DownloadCommand
             using var httpStream = await patchClient.GetFileAsync(new(patch.Url), token).ConfigureAwait(false);
             using var patchStream = new BufferedStream(httpStream, 1 << 20);
 
-            var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
+            await using var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
                 new(OutputPath),
                 RegexMatches,
                 cache.FilteredFiles

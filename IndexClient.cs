@@ -1,4 +1,4 @@
-using CommunityToolkit.HighPerformance;
+using DotNext.IO;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Compression;
@@ -549,7 +549,7 @@ public sealed class IndexFileStream : Stream
                 var currentLine = ReadLine();
                 while (currentLine == string.Empty)
                     currentLine = ReadLine();
-                if (currentLine == "--" + boundary + "--")
+                if (currentLine == $"--{boundary}--")
                     yield break;
                 if (currentLine != $"--{boundary}")
                     throw new InvalidOperationException("Invalid boundary");

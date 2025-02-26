@@ -1,9 +1,7 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
-
-using FFXIVDownloader.ZiPatch.Util;
 
 namespace FFXIVDownloader.ZiPatch.Config;
 
@@ -28,7 +26,7 @@ public abstract class ZiPatchConfig : IAsyncDisposable
     public bool IgnoreMissing { get; set; }
     public bool IgnoreOldMismatch { get; set; }
 
-    public abstract Task<Stream> OpenStream(string path);
+    public abstract Task<ITargetFile> OpenFile(string path);
 
     public abstract Task CreateDirectory(string path);
 

@@ -1,8 +1,6 @@
 using System.Collections.Frozen;
-using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
-using System.Text;
 using DotNext.Collections.Generic;
 using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
@@ -140,8 +138,7 @@ public sealed class ClutFile
         var patchSet = new HashSet<ParsedVersionString>();
         foreach (var file in Files.Values)
             foreach (var data in file.Data)
-                if (data.Patch.HasValue)
-                    patchSet.Add(data.Patch.Value.Patch);
+                patchSet.Add(data.AppliedVersion);
         var i = 0;
         var patches = patchSet.ToFrozenDictionary(v => v, v => i++);
 
@@ -167,11 +164,6 @@ public sealed class ClutFile
         Parallel.ForEach(Files.Values, f => f.RemoveOverlaps());
     }
 
-    public void WipeZeros()
-    {
-        Parallel.ForEach(Files.Values, f => f.WipeZeros());
-    }
-
     public void ApplyLut(ParsedVersionString patch, LutChunk chunk)
     {
         using var dataStream = new MemoryStream(chunk.Data, false);
@@ -193,10 +185,10 @@ public sealed class ClutFile
                 ApplyLut(patch, new SqpkAddData(reader, names));
                 break;
             case ChunkType.SqpkDeleteData:
-                ApplyLut(new SqpkDeleteData(reader, names));
+                ApplyLut(patch, new SqpkDeleteData(reader, names));
                 break;
             case ChunkType.SqpkExpandData:
-                ApplyLut(new SqpkExpandData(reader, names));
+                ApplyLut(patch, new SqpkExpandData(reader, names));
                 break;
             case ChunkType.SqpkFileAdd:
                 ApplyLut(patch, new SqpkFile(reader, OperationKind.AddFile, names));
@@ -235,22 +227,22 @@ public sealed class ClutFile
         if (chunk.BlockNumber > 0)
             file.Data.Add(ClutDataRef.FromRawPatchData(patch, chunk.BlockDataPatchOffset, chunk.BlockOffset, checked((int)chunk.BlockNumber)));
         if (chunk.BlockDeleteNumber > 0)
-            file.Data.Add(ClutDataRef.FromZeros(chunk.BlockOffset + chunk.BlockNumber, checked((int)chunk.BlockDeleteNumber)));
+            file.Data.Add(ClutDataRef.FromZeros(patch, chunk.BlockOffset + chunk.BlockNumber, checked((int)chunk.BlockDeleteNumber)));
     }
 
-    private void ApplyLut(SqpkDeleteData chunk)
+    private void ApplyLut(ParsedVersionString patch, SqpkDeleteData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
-        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, checked((int)chunk.BlockNumber));
+        var (empty, zero) = ClutDataRef.FromEmpty(patch, chunk.BlockOffset, checked((int)chunk.BlockNumber));
         file.Data.Add(empty);
         if (zero is { } zeroBlock)
             file.Data.Add(zeroBlock);
     }
 
-    private void ApplyLut(SqpkExpandData chunk)
+    private void ApplyLut(ParsedVersionString patch, SqpkExpandData chunk)
     {
         var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
-        var (empty, zero) = ClutDataRef.FromEmpty(chunk.BlockOffset, checked((int)chunk.BlockNumber));
+        var (empty, zero) = ClutDataRef.FromEmpty(patch, chunk.BlockOffset, checked((int)chunk.BlockNumber));
         file.Data.Add(empty);
         if (zero is { } zeroBlock)
             file.Data.Add(zeroBlock);

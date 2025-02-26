@@ -1,14 +1,14 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
 
 using System.IO.Hashing;
-using CommunityToolkit.HighPerformance;
 using FFXIVDownloader.ZiPatch.Util;
 using FFXIVDownloader.ZiPatch.Config;
 using FFXIVDownloader.Lut;
 using DotNext;
+using DotNext.IO;
 
 namespace FFXIVDownloader.ZiPatch.Chunk;
 

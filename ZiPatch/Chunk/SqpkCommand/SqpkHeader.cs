@@ -1,4 +1,4 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
@@ -63,9 +63,9 @@ public class SqpkHeader : SqpkChunk, ISqpkChunk<SqpkHeader>
 
     public override async Task ApplyAsync(ZiPatchConfig config)
     {
-        var file = await config.OpenStream(TargetFile.GetPath(config.Platform)).ConfigureAwait(false);
+        var file = await config.OpenFile(TargetFile.GetPath(config.Platform)).ConfigureAwait(false);
 
-        await file.WriteFromOffset(HeaderData, HeaderKind == TargetHeaderKind.Version ? 0 : HEADER_SIZE).ConfigureAwait(false);
+        await file.WriteAsync(HeaderData, HeaderKind == TargetHeaderKind.Version ? 0 : HEADER_SIZE).ConfigureAwait(false);
     }
 
     public override void WriteLUT(BinaryWriter writer, List<string> names, out ChunkType type)

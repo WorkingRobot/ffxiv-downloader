@@ -12,8 +12,8 @@ public class LutCommand
 {
     public required MainCommand Parent { get; set; }
 
-    [CliOption(Required = false, Description = "The slug of the repository.")]
-    public string? Slug { get; set; }
+    [CliOption(Required = true, Description = "The slug of the repository.")]
+    public required string Slug { get; set; }
 
     [CliOption(Required = false, Description = "The version to download from the slug. If blank, the latest version will be used.")]
     public string? Version { get; set; }
@@ -74,7 +74,9 @@ public class LutCommand
             {
                 Header = new LutHeader
                 {
-                    Compression = Compression
+                    Compression = Compression,
+                    Version = ver,
+                    Repository = Slug
                 }
             };
 
