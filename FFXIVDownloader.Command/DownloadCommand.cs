@@ -123,7 +123,7 @@ public class DownloadCommand
 
         ClutFile latestClut;
         {
-            using var stream = await patchClient.GetClutAsync($"{ClutPath}/{latestVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
+            using var stream = await patchClient.GetClutAsync($"{ClutPath}/{latestVersion:P}.clut", latestVersion, token).ConfigureAwait(false);
             using var reader = new BinaryReader(stream);
             latestClut = new(reader);
         }

@@ -148,48 +148,56 @@ public sealed class ClutPatcher : IDisposable
 
     private async IAsyncEnumerable<DataRefOperation> GetDataRefsAsync([EnumeratorCancellation] CancellationToken token = default)
     {
-        var allRefs = FileNames.Index()
-            .Select(f => (f.Index, Refs: Enumerable.Range(0, Diff.AddedFiles[f.Item].Count)))
-            .SelectMany(f => f.Refs.Select(r => new DataReference(f.Index, r)))
-            .ToArray();
-
-        var nonDownloadDataRefsEnum = allRefs
-            .Where(f => GetRef(f).Type is not (ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch));
-        var nonDownloadCount = nonDownloadDataRefsEnum.Count();
-        var nonDownloadDataRefs = nonDownloadDataRefsEnum.GetEnumerator();
-
-        var sectionComparer = EqualityComparer<PatchSection>.Create(
-            (a, b) =>
-            {
-                var aRef = GetRef(a.DataRef);
-                var bRef = GetRef(b.DataRef);
-                return aRef.AppliedVersion == bRef.AppliedVersion && aRef.Patch == bRef.Patch;
-            },
-            p =>
-            {
-                var patch = GetRef(p.DataRef);
-                return HashCode.Combine(patch.AppliedVersion, patch.Patch!.Value);
-            });
-
-        var downloadRefs = new Dictionary<PatchSection, List<DataReference>?>();
-        foreach (var dataRef in allRefs)
+        IEnumerator<DataReference> nonDownloadDataRefs;
+        int nonDownloadDataRefCount;
+        Dictionary<PatchSection, List<DataReference>?> downloadDataRefs;
+        int downloadDataRefCount;
         {
-            var patch = GetRef(dataRef);
-            if (patch.Type is not ClutDataRef.RefType.Patch and not ClutDataRef.RefType.SplitPatch)
-                continue;
-            var section = new PatchSection(dataRef);
-            if (!downloadRefs.TryGetValue(section, out var list))
-                downloadRefs[section] = list = [];
-            list!.Add(dataRef);
+            var allRefs = FileNames.Index()
+                .Select(f => (f.Index, Refs: Enumerable.Range(0, Diff.AddedFiles[f.Item].Count)))
+                .SelectMany(f => f.Refs.Select(r => new DataReference(f.Index, r)))
+                .ToArray();
+
+            var nonDownloadDataRefsEnum = allRefs
+                .Where(f => GetRef(f).Type is not (ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch));
+            nonDownloadDataRefCount = nonDownloadDataRefsEnum.Count();
+            nonDownloadDataRefs = nonDownloadDataRefsEnum.GetEnumerator();
+
+            var sectionComparer = EqualityComparer<PatchSection>.Create(
+                (a, b) =>
+                {
+                    var aRef = GetRef(a.DataRef);
+                    var bRef = GetRef(b.DataRef);
+                    return aRef.AppliedVersion == bRef.AppliedVersion && aRef.Patch == bRef.Patch;
+                },
+                p =>
+                {
+                    var patch = GetRef(p.DataRef);
+                    return HashCode.Combine(patch.AppliedVersion, patch.Patch!.Value);
+                });
+
+            downloadDataRefs = [];
+            downloadDataRefCount = 0;
+            foreach (var dataRef in allRefs)
+            {
+                var patch = GetRef(dataRef);
+                if (patch.Type is not ClutDataRef.RefType.Patch and not ClutDataRef.RefType.SplitPatch)
+                    continue;
+                var section = new PatchSection(dataRef);
+                if (!downloadDataRefs.TryGetValue(section, out var list))
+                    downloadDataRefs[section] = list = [];
+                downloadDataRefCount++;
+                list!.Add(dataRef);
+            }
+
+            foreach (var (section, refs) in downloadDataRefs)
+            {
+                if (refs!.Count == 1)
+                    downloadDataRefs[section] = null;
+            }
         }
 
-        foreach (var (section, refs) in downloadRefs)
-        {
-            if (refs!.Count == 1)
-                downloadRefs[section] = null;
-        }
-
-        var downloadTask = GetPatchDataAsync(downloadRefs.Select(r => r.Key), token);
+        var downloadTask = GetPatchDataAsync(downloadDataRefs.Keys, token);
         _ = downloadTask.ContinueWith(task => ApplyQueue.Writer.Complete(task.Exception), token);
 
         var refsNondownload = 0;
@@ -199,7 +207,7 @@ public sealed class ClutPatcher : IDisposable
             token.ThrowIfCancellationRequested();
             if (ApplyQueue.Reader.TryRead(out var item))
             {
-                if (downloadRefs.TryGetValue(item.Interval, out var refs) && refs != null)
+                if (downloadDataRefs.TryGetValue(item.Interval, out var refs) && refs != null)
                 {
                     foreach (var p in refs)
                     {
@@ -230,9 +238,9 @@ public sealed class ClutPatcher : IDisposable
                 break;
             }
         }
-        if (refsNondownload != nonDownloadCount)
+        if (refsNondownload != nonDownloadDataRefCount)
             throw new InvalidOperationException("Not all non-downloaded refs were processed");
-        if (refsDownload + nonDownloadCount != allRefs.Length)
+        if (refsDownload != downloadDataRefCount)
             throw new InvalidOperationException("Not all downloaded refs were processed");
     }
 
@@ -243,13 +251,10 @@ public sealed class ClutPatcher : IDisposable
         var rangeTasks = new List<Task>();
 
         return Parallel.ForEachAsync(groupedSections, token, (group, token) =>
-        {
-            var parts = group.DistinctBy(p => GetPatch(p));
-            return GetPatchesFromVersionAsync(
-                group.Key, parts,
+            GetPatchesFromVersionAsync(
+                group.Key, group,
                 (patch, token) => ApplyQueue.Writer.WriteAsync(patch, token),
-                token);
-        });
+                token));
     }
 
     private ValueTask GetPatchesFromVersionAsync(ParsedVersionString version, IEnumerable<PatchSection> parts, Func<PatchIntervalData, CancellationToken, ValueTask> onRangeRecieved, CancellationToken token = default)
