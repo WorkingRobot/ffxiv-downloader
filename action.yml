@@ -14,6 +14,9 @@ inputs:
   regex:
     description: 'Regex to match files to download. Defaults to .*, which matches all files. Retroactively changing this should invalidate any cached files.'
     default: '.*'
+  parallelism:
+    description: 'Number of concurrent threads to use for updating.'
+    default: 4
   clut-path:
     description: 'Path to a directory or base url where CLUT files can be retrieved from.'
     default: 'https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/dev/cluts'
@@ -47,6 +50,8 @@ runs:
     - '${{inputs.version}}'
     - '-f'
     - '${{inputs.regex}}'
+    - '-p'
+    - '${{inputs.parallelism}}'
     - '-o'
     - '${{inputs.output-path}}'
     - '-c'
