@@ -6,7 +6,7 @@ using FFXIVDownloader.ZiPatch.Config;
 using System.Runtime.ConstrainedExecution;
 using System.Text.RegularExpressions;
 
-namespace FFXIVDownloader;
+namespace FFXIVDownloader.Command;
 
 [CliCommand(Description = "Download a list of files from a slug and version.", Parent = typeof(MainCommand))]
 public class DownloadCommand
@@ -72,7 +72,15 @@ public class DownloadCommand
                 break;
         }
 
-        using var patchClient = new PatchClient();
+        using var patchClient = new PatchClient(10);
+
+        //await Parallel.ForEachAsync(chain, async (val, token) =>
+        //{
+        //    var h = await patchClient.GetPatchAsync(val.Patch.Url, val.Version, token).ConfigureAwait(false);
+        //    using var s = new FileStream($"./patch-data/{val.Version:P}.patch", FileMode.CreateNew, FileAccess.Write);
+        //    await h.CopyToAsync(s, token).ConfigureAwait(false);
+        //});
+        //return;
 
         if (!string.IsNullOrWhiteSpace(ClutPath))
             await TryDownloadFromClut(patchClient, installedVersion, chain, cache, token).ConfigureAwait(false);
@@ -104,14 +112,14 @@ public class DownloadCommand
         ClutFile? installedClut = null;
         if (installedVersion > ParsedVersionString.Epoch)
         {
-            using var stream = await patchClient.GetFileAsync($"{ClutPath}/{installedVersion:P}.clut", token).ConfigureAwait(false);
+            using var stream = await patchClient.GetPatchAsync($"{ClutPath}/{installedVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
             using var reader = new BinaryReader(stream);
             installedClut = new(reader);
         }
 
         ClutFile latestClut;
         {
-            using var stream = await patchClient.GetFileAsync($"{ClutPath}/{latestVersion:P}.clut", token).ConfigureAwait(false);
+            using var stream = await patchClient.GetPatchAsync($"{ClutPath}/{latestVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
             using var reader = new BinaryReader(stream);
             latestClut = new(reader);
         }
@@ -164,7 +172,7 @@ public class DownloadCommand
             Log.Verbose($"  URL: {patch.Url}");
             Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
-            using var httpStream = await patchClient.GetFileAsync(new(patch.Url), token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetPatchAsync(new(patch.Url), ver, token).ConfigureAwait(false);
             using var patchStream = new BufferedStream(httpStream, 1 << 20);
 
             await using var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(

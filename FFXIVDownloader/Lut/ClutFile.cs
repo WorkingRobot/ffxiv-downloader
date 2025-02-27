@@ -161,7 +161,7 @@ public sealed class ClutFile
 
     public void RemoveOverlaps()
     {
-        Parallel.ForEach(Files.Values, f => f.RemoveOverlaps());
+        Parallel.ForEach(Files, f => f.Value.RemoveOverlaps(f.Key));
     }
 
     public void ApplyLut(ParsedVersionString patch, LutChunk chunk)
@@ -255,10 +255,13 @@ public sealed class ClutFile
             case OperationKind.AddFile:
                 var file = Files.GetOrAdd(GetPath(chunk.TargetFile));
 
-                if (chunk.FileOffset == 0)
-                    file.Data.Clear();
-
                 var off = chunk.FileOffset;
+                if (off == 0)
+                {
+                    Log.Info($"Clearing file {GetPath(chunk.TargetFile)} ({file.Data.Count} Blocks)");
+                    file.Data.Clear();
+                }
+
                 foreach (var block in chunk.CompressedData!)
                 {
                     if (block.IsCompressed)

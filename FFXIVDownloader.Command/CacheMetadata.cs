@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace FFXIVDownloader;
+namespace FFXIVDownloader.Command;
 
 public sealed record CacheMetadata
 {

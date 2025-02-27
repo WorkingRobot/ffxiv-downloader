@@ -8,6 +8,8 @@ public readonly record struct ClutPatchRef
     public int Size { get; init; }
     public bool IsCompressed { get; init; }
 
+    public long End => Offset + Size;
+
     public ClutPatchRef(BinaryReader reader, ref long patchOffset)
     {
         Offset = reader.Read7BitEncodedInt64() + patchOffset;

@@ -67,10 +67,10 @@ public readonly record struct ParsedVersionString : IComparable<ParsedVersionStr
         if (IsHistoric != other.IsHistoric)
             return other.IsHistoric.CompareTo(IsHistoric);
 
-        // var sectionLen = Section?.Length ?? 0;
-        // var otherSectionLen = other.Section?.Length ?? 0;
-        // if (sectionLen != otherSectionLen)
-        //     return sectionLen.CompareTo(otherSectionLen);
+        var sectionLen = Section?.Length ?? 0;
+        var otherSectionLen = other.Section?.Length ?? 0;
+        if (sectionLen != otherSectionLen)
+            return sectionLen.CompareTo(otherSectionLen);
 
         var section = Section ?? string.Empty;
         var otherSection = other.Section ?? string.Empty;

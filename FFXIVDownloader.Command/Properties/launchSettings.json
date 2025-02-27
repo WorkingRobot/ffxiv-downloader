@@ -1,0 +1,24 @@
+{
+  "profiles": {
+    "CLUT": {
+      "commandName": "Project",
+      "commandLineArgs": "--verbose -p \"./patch-data/\" clut -s 4e9a232b -b lut-xiv -o clut-xiv -c Brotli",
+      "workingDirectory": "J:\\Code\\Projects\\ffxiv-downloader"
+    },
+    "LUT": {
+      "commandName": "Project",
+      "commandLineArgs": "--verbose -p \"./patch-data/\" lut -s 4e9a232b -o lut-xiv -c Brotli",
+      "workingDirectory": "J:\\Code\\Projects\\ffxiv-downloader"
+    },
+    "Download EXD": {
+      "commandName": "Project",
+      "commandLineArgs": "--verbose --debug -p \"./patch-data/\" download -s 4e9a232b -c clut-xiv -o dl-xiv",
+      "workingDirectory": "J:\\Code\\Projects\\ffxiv-downloader"
+    },
+    "Graphviz": {
+      "commandName": "Project",
+      "commandLineArgs": "--verbose -p \"./patch-data/\" graphviz -s 4e9a232b",
+      "workingDirectory": "J:\\Code\\Projects\\ffxiv-downloader"
+    }
+  }
+}

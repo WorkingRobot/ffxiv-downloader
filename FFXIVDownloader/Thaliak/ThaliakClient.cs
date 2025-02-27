@@ -16,7 +16,12 @@ public sealed class ThaliakClient : IDisposable
         {
             {
                 "4e9a232b", new Dictionary<ParsedVersionString, ParsedVersionString?>{
-                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000z") },
+                    // Thaliak incorrectly orders these hist patches.
+                    // aa comes after z. It's not lexicographically sorted.
+                    { new("2024.05.31.0000.0000"), new("H2024.05.31.0000.0000ag") },
+                    { new("H2024.05.31.0000.0000b"), new("H2024.05.31.0000.0000a") },
+                    { new("H2024.05.31.0000.0000aa"), new("H2024.05.31.0000.0000z") },
+
                     { new("2017.06.06.0000.0001"), new("H2017.06.06.0000.0001m") },
                     { new("H2017.06.06.0000.0001a"), null },
                 }.ToFrozenDictionary()
@@ -129,7 +134,7 @@ public sealed class ThaliakClient : IDisposable
         return ret;
     }
 
-    public async Task<string> GetGraphvizTreeAsync(string slug)
+    public async Task<string> GetGraphvizTreeAsync(string slug, bool verifyExistence, bool filterInactive)
     {
         var versions = (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
         {
@@ -156,12 +161,14 @@ public sealed class ThaliakClient : IDisposable
         }).ConfigureAwait(false)).Data.Repository.Versions!;
 
         var treeList = versions.OrderByDescending(x => x.VersionString).ToList();
+        if (filterInactive)
+            treeList = treeList.Where(x => x.IsActive).ToList();
         var overrides = Overrides.GetValueOrDefault(slug);
         var b = new StringBuilder();
         b.AppendLine("digraph {");
         foreach (var (idx, ver) in treeList.Index())
         {
-            var exists = await DoesPatchExist(ver.Patches[0]).ConfigureAwait(false);
+            var exists = !verifyExistence || await DoesPatchExist(ver.Patches[0]).ConfigureAwait(false);
             var (fill, font) = (exists, ver.IsActive) switch
             {
                 (true, true) => ("lightgreen", "black"),
@@ -171,7 +178,7 @@ public sealed class ThaliakClient : IDisposable
             };
             b.AppendLine($"  Idx{idx} [ label = \"{ver.VersionString.ToString("P")}\" style = filled fillcolor = {fill} fontcolor = {font} ]");
             var prereqs = ver.PrerequisiteVersions?.Select(v => v.VersionString) ?? [];
-            prereqs = prereqs.Where(prereq => prereq > ver.VersionString);
+            prereqs = prereqs.Where(prereq => prereq < ver.VersionString);
             if (overrides?.TryGetValue(ver.VersionString, out var @override) ?? false)
                 prereqs = @override.HasValue ? [@override.Value] : [];
             foreach (var (listIdx, prereq) in prereqs.OrderDescending().Index())

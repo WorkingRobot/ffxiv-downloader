@@ -28,22 +28,22 @@ public sealed class IndexClient : IDisposable
         };
     }
 
-    private class LatestData
+    private sealed class LatestData
     {
-        public string Boot { get; set; }
-        public int BootRevision { get; set; }
-        public string Game { get; set; }
-        public int GameRevision { get; set; }
-        public string Ex1 { get; set; }
-        public int Ex1Revision { get; set; }
-        public string Ex2 { get; set; }
-        public int Ex2Revision { get; set; }
-        public string Ex3 { get; set; }
-        public int Ex3Revision { get; set; }
-        public string Ex4 { get; set; }
-        public int Ex4Revision { get; set; }
-        public string Ex5 { get; set; }
-        public int Ex5Revision { get; set; }
+        public required string Boot { get; set; }
+        public required int BootRevision { get; set; }
+        public required string Game { get; set; }
+        public required int GameRevision { get; set; }
+        public required string Ex1 { get; set; }
+        public required int Ex1Revision { get; set; }
+        public required string Ex2 { get; set; }
+        public required int Ex2Revision { get; set; }
+        public required string Ex3 { get; set; }
+        public required int Ex3Revision { get; set; }
+        public required string Ex4 { get; set; }
+        public required int Ex4Revision { get; set; }
+        public required string Ex5 { get; set; }
+        public required int Ex5Revision { get; set; }
 
         public (string Repository, string Version)? GetBySlug(string slug) =>
             slug switch

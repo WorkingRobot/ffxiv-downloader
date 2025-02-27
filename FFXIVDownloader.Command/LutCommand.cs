@@ -5,7 +5,7 @@ using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
 using FFXIVDownloader.ZiPatch.Util;
 
-namespace FFXIVDownloader;
+namespace FFXIVDownloader.Command;
 
 [CliCommand(Description = "Create a LUT file from a patch url. Provide a slug or a list of urls.", Parent = typeof(MainCommand))]
 public class LutCommand
@@ -51,7 +51,7 @@ public class LutCommand
 
         Log.Info($"Total Size: {(chain.Any(p => p.Patch.Size == 0) ? ">" : string.Empty)}{chain.Sum(p => p.Patch.Size) / (double)(1 << 30):0.00} GiB");
 
-        using var patchClient = new PatchClient();
+        using var patchClient = new PatchClient(10);
 
         await Parallel.ForEachAsync(chain, new ParallelOptions
         {
@@ -66,7 +66,7 @@ public class LutCommand
             if (patch.Size != 0)
                 Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
-            using var httpStream = await patchClient.GetFileAsync(patch.Url, token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetPatchAsync(patch.Url, ver, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var patchStream = new PositionedStream(bufferedStream);
 

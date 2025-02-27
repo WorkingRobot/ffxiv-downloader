@@ -65,6 +65,7 @@ public class SqpkFile : SqpkChunk, ISqpkChunk<SqpkFile>
             case OperationKind.AddFile:
                 TargetFile = new PlaceholderedSqexFile(names[0]);
                 FileOffset = reader.ReadInt64();
+
                 var compDataCount = reader.ReadInt32();
                 CompressedData = new(compDataCount);
                 for (var i = 0; i < compDataCount; ++i)

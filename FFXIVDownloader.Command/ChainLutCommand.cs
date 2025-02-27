@@ -3,7 +3,7 @@ using FFXIVDownloader.Lut;
 using FFXIVDownloader.Thaliak;
 using System.Diagnostics;
 
-namespace FFXIVDownloader;
+namespace FFXIVDownloader.Command;
 
 [CliCommand(Name = "clut", Description = "Create a chain LUT file from a patch url. If a slug is provided, the base path will be the folder to search the .lut files for. Otherwise, the base path will be used in conjuction with the provided urls.", Parent = typeof(MainCommand))]
 public class ChainLutCommand
@@ -43,12 +43,12 @@ public class ChainLutCommand
 
         var chain = await LutCommand.GetChainAsync(Urls, Slug, Version, token).ConfigureAwait(false);
 
-        using var patchClient = new PatchClient();
+        using var patchClient = new PatchClient(10);
 
         ClutFile clut;
         if (BaseClut != null)
         {
-            using var httpStream = await patchClient.GetFileAsync(BaseClut, token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetClutAsync(BaseClut, ParsedVersionString.Epoch, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
 
             using var reader = new BinaryReader(bufferedStream);
@@ -82,7 +82,7 @@ public class ChainLutCommand
             Log.Info($"Processing {ver}");
             Log.Verbose($"  URL: {url}");
 
-            using var httpStream = await patchClient.GetFileAsync(url, token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetLutAsync(url, ver, token).ConfigureAwait(false);
             using var bufferedStream = new BufferedStream(httpStream, 1 << 20);
             using var reader = new BinaryReader(bufferedStream);
 

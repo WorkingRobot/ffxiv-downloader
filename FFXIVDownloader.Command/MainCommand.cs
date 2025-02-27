@@ -1,6 +1,6 @@
 using DotMake.CommandLine;
 
-namespace FFXIVDownloader;
+namespace FFXIVDownloader.Command;
 
 [CliCommand]
 public class MainCommand
@@ -10,6 +10,9 @@ public class MainCommand
 
     [CliOption(Required = false, Description = "Enables debug logging. Implies verbose logging.")]
     public bool Debug { get; set; }
+
+    [CliOption(Required = false, Description = "The file path from where to access patch data from.")]
+    public string? PatchOverridePath { get; set; }
 
     public CancellationToken Init()
     {
@@ -21,6 +24,8 @@ public class MainCommand
 #endif
         Log.Info($"Verbose: {Log.IsVerboseEnabled}; Debug: {Log.IsDebugEnabled}");
 
+        PatchClient.OverridePath = PatchOverridePath;
+
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (sender, eventArgs) =>
         {
@@ -30,16 +35,9 @@ public class MainCommand
         return cts.Token;
     }
 
-    private static async Task<int> Main(string[] args)
-    {
-        try
+    private static Task<int> Main(string[] args) =>
+        Cli.RunAsync<MainCommand>(args, new CliSettings
         {
-            return await Cli.RunAsync<MainCommand>(args).ConfigureAwait(false);
-        }
-        catch (Exception e)
-        {
-            Log.Error(e);
-            return 1;
-        }
-    }
+            //EnableDefaultExceptionHandler = true
+        });
 }
