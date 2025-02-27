@@ -29,6 +29,9 @@ public class LutCommand
     [CliOption(Required = false, Description = "The compression method to use for the LUT files.")]
     public CompressType Compression { get; set; } = CompressType.Brotli;
 
+    [CliOption(Required = false, Description = "Force overwrite existing LUT files.")]
+    public bool Force { get; set; }
+
     public async Task RunAsync()
     {
         var token = Parent.Init();
@@ -38,13 +41,16 @@ public class LutCommand
 
         var chain = await GetChainAsync(Urls, Slug, Version, token).ConfigureAwait(false);
 
-        for (var i = chain.Count - 1; i >= 0; --i)
+        if (!Force)
         {
-            var (ver, patch) = chain[i];
-            if (File.Exists(Path.Join(OutputPath, $"{ver:P}.lut")))
+            for (var i = chain.Count - 1; i >= 0; --i)
             {
-                Log.Info($"Skipping patch {ver}");
-                chain.RemoveAt(i);
+                var (ver, patch) = chain[i];
+                if (File.Exists(Path.Join(OutputPath, $"{ver:P}.lut")))
+                {
+                    Log.Info($"Skipping patch {ver}");
+                    chain.RemoveAt(i);
+                }
             }
         }
 

@@ -111,14 +111,14 @@ public class DownloadCommand
         ClutFile? installedClut = null;
         if (installedVersion > ParsedVersionString.Epoch)
         {
-            using var stream = await patchClient.GetPatchAsync($"{ClutPath}/{installedVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
+            using var stream = await patchClient.GetClutAsync($"{ClutPath}/{installedVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
             using var reader = new BinaryReader(stream);
             installedClut = new(reader);
         }
 
         ClutFile latestClut;
         {
-            using var stream = await patchClient.GetPatchAsync($"{ClutPath}/{latestVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
+            using var stream = await patchClient.GetClutAsync($"{ClutPath}/{latestVersion:P}.clut", installedVersion, token).ConfigureAwait(false);
             using var reader = new BinaryReader(stream);
             latestClut = new(reader);
         }
@@ -171,7 +171,7 @@ public class DownloadCommand
             Log.Verbose($"  URL: {patch.Url}");
             Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
-            using var httpStream = await patchClient.GetPatchAsync(new(patch.Url), ver, token).ConfigureAwait(false);
+            using var httpStream = await patchClient.GetPatchAsync(patch.Url, ver, token).ConfigureAwait(false);
             using var patchStream = new BufferedStream(httpStream, 1 << 20);
 
             await using var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
