@@ -102,7 +102,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -138,7 +138,6 @@ jobs:
 
       - name: Fetch and Rebase
         id: fetch
-        continue-on-error: true
         if: ${{steps.commit.conclusion == 'success'}}
         run: |
           git fetch origin
