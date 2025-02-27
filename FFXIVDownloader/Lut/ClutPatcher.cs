@@ -12,6 +12,8 @@ namespace FFXIVDownloader.Lut;
 
 public sealed class ClutPatcher : IDisposable
 {
+    // Akamai restricts the range header size to at most 1034 bytes from my testing,
+    // but it doesn't work sometimes, so use a smaller number
     private const int MAX_RANGE_HEADER_SIZE = 1 << 12;
     private const int MIN_RANGE_DISTANCE = 1 << 9;
 
@@ -20,43 +22,46 @@ public sealed class ClutPatcher : IDisposable
     public Uri BasePatchUrl { get; }
 
     private PatchClient Client { get; }
-    private Channel<(ParsedVersionString, PatchIntervalData)> ApplyQueue { get; } = Channel.CreateBounded<(ParsedVersionString, PatchIntervalData)>(new BoundedChannelOptions(16)
+    private string[] FileNames { get; }
+    private Channel<PatchIntervalData> ApplyQueue { get; } = Channel.CreateBounded<PatchIntervalData>(new BoundedChannelOptions(16)
     {
         FullMode = BoundedChannelFullMode.Wait,
         SingleReader = true
     });
+    
+    private readonly record struct DataReference(int FileNameIdx, int DataRefIdx);
 
-    private readonly record struct PatchSection(ParsedVersionString Version, ClutPatchRef Location);
+    private readonly record struct PatchSection(DataReference DataRef);
 
-    private readonly record struct DataRefOperation(string File, ClutDataRef DataRef, PatchIntervalData? PatchData);
+    private readonly record struct DataRefOperation(DataReference DataRef, PatchIntervalData? PatchData);
 
-    private sealed class MergedRange(ClutPatchRef part)
+    private sealed class MergedRange(PatchSection part, ClutPatchRef patchRef)
     {
-        public long Offset { get; } = part.Offset;
-        public int Size { get; private set; } = part.Size;
-        public List<ClutPatchRef> Parts { get; } = [part];
+        public long Offset { get; } = patchRef.Offset;
+        public int Size { get; private set; } = patchRef.Size;
+        public List<PatchSection> Parts { get; } = [part];
 
-        public bool Add(ClutPatchRef part)
+        public bool Add(PatchSection part, ClutPatchRef patchRef)
         {
-            if (part.Offset + part.Size + MIN_RANGE_DISTANCE < Offset)
+            if (patchRef.Offset + patchRef.Size + MIN_RANGE_DISTANCE < Offset)
                 return false;
 
-            Size = Math.Max(Size, checked((int)(part.Offset + part.Size - Offset)));
+            Size = Math.Max(Size, checked((int)(patchRef.Offset + patchRef.Size - Offset)));
             Parts.Add(part);
             return true;
         }
     }
 
-    private sealed class PatchIntervalData(ClutPatchRef interval, ReadOnlyMemory<byte> fileData)
+    private sealed class PatchIntervalData(PatchSection interval, ReadOnlyMemory<byte> fileData)
     {
-        public ClutPatchRef Interval { get; } = interval;
+        public PatchSection Interval { get; } = interval;
         public ReadOnlyMemory<byte> Data { get; } = fileData;
 
-        public static async Task<PatchIntervalData> CreateAsync(ClutPatchRef interval, ReadOnlyMemory<byte> patchData, CancellationToken token = default)
+        public static async Task<PatchIntervalData> CreateAsync(PatchSection interval, ClutPatchRef patchRef, ReadOnlyMemory<byte> patchData, CancellationToken token = default)
         {
-            if (interval.Size != patchData.Length)
+            if (patchRef.Size != patchData.Length)
                 throw new ArgumentException("Invalid patch data size", nameof(patchData));
-            if (interval.IsCompressed)
+            if (patchRef.IsCompressed)
                 return new(interval, await DecompressAsync(patchData, token).ConfigureAwait(false));
             return new(interval, patchData);
         }
@@ -82,6 +87,7 @@ public sealed class ClutPatcher : IDisposable
             UriKind.Absolute);
 
         Client = new(10);
+        FileNames = [.. Diff.AddedFiles.Keys];
     }
 
     public Task ApplyAsync(ZiPatchConfig config, CancellationToken token = default)
@@ -89,7 +95,7 @@ public sealed class ClutPatcher : IDisposable
         return Parallel.ForEachAsync(
             GetDataRefsAsync(token),
             new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = Concurrency },
-            (operation, token) => ApplyDataRefAsync(config, operation.File, operation.DataRef, operation.PatchData?.Data, token)
+            (operation, token) => ApplyDataRefAsync(config, GetRefName(operation.DataRef), GetRef(operation.DataRef), operation.PatchData?.Data, token)
         );
     }
 
@@ -125,18 +131,46 @@ public sealed class ClutPatcher : IDisposable
 
     private async IAsyncEnumerable<DataRefOperation> GetDataRefsAsync([EnumeratorCancellation] CancellationToken token = default)
     {
-        var allRefs = Diff.AddedFiles
-            .Select(f => (f.Key, f.Value))
-            .SelectMany(f => f.Value.Select(r => (File: f.Key, DataRef: r)))
+        var allRefs = FileNames.Index()
+            .Select(f => (f.Index, Refs: Enumerable.Range(0, Diff.AddedFiles[f.Item].Count)))
+            .SelectMany(f => f.Refs.Select(r => new DataReference(f.Index, r)))
             .ToArray();
 
         var nonDownloadDataRefsEnum = allRefs
-            .Where(f => f.DataRef.Type is not (ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch));
+            .Where(f => GetRef(f).Type is not (ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch));
         var nonDownloadCount = nonDownloadDataRefsEnum.Count();
         var nonDownloadDataRefs = nonDownloadDataRefsEnum.GetEnumerator();
-        var downloadRefs = allRefs
-            .Where(f => f.DataRef.Type is ClutDataRef.RefType.Patch or ClutDataRef.RefType.SplitPatch)
-            .ToLookup(k => new PatchSection(k.DataRef.AppliedVersion, k.DataRef.Patch!.Value));
+
+        var sectionComparer = EqualityComparer<PatchSection>.Create(
+            (a, b) =>
+            {
+                var aRef = GetRef(a.DataRef);
+                var bRef = GetRef(b.DataRef);
+                return aRef.AppliedVersion == bRef.AppliedVersion && aRef.Patch == bRef.Patch;
+            },
+            p =>
+            {
+                var patch = GetRef(p.DataRef);
+                return HashCode.Combine(patch.AppliedVersion, patch.Patch!.Value);
+            });
+
+        var downloadRefs = new Dictionary<PatchSection, List<DataReference>?>();
+        foreach (var dataRef in allRefs)
+        {
+            var patch = GetRef(dataRef);
+            if (patch.Type is not ClutDataRef.RefType.Patch and not ClutDataRef.RefType.SplitPatch)
+                continue;
+            var section = new PatchSection(dataRef);
+            if (!downloadRefs.TryGetValue(section, out var list))
+                downloadRefs[section] = list = [];
+            list!.Add(dataRef);
+        }
+
+        foreach (var (section, refs) in downloadRefs)
+        {
+            if (refs!.Count == 1)
+                downloadRefs[section] = null;
+        }
 
         var downloadTask = GetPatchDataAsync(downloadRefs.Select(r => r.Key), token);
         _ = downloadTask.ContinueWith(task => ApplyQueue.Writer.Complete(task.Exception), token);
@@ -148,18 +182,24 @@ public sealed class ClutPatcher : IDisposable
             token.ThrowIfCancellationRequested();
             if (ApplyQueue.Reader.TryRead(out var item))
             {
-                var (version, data) = item;
-                foreach (var p in downloadRefs[new(version, data.Interval)])
+                if (downloadRefs.TryGetValue(item.Interval, out var refs) && refs != null)
+                {
+                    foreach (var p in refs)
+                    {
+                        refsDownload++;
+                        yield return new(p, item);
+                    }
+                }
+                else
                 {
                     refsDownload++;
-                    yield return new(p.File, p.DataRef, data);
+                    yield return new(item.Interval.DataRef, item);
                 }
             }
             else if (nonDownloadDataRefs.MoveNext())
             {
                 refsNondownload++;
-                var (path, dataRef) = nonDownloadDataRefs.Current;
-                yield return new(path, dataRef, null);
+                yield return new(nonDownloadDataRefs.Current, null);
             }
             else if (!ApplyQueue.Reader.Completion.IsCompleted)
             {
@@ -181,35 +221,31 @@ public sealed class ClutPatcher : IDisposable
 
     private Task GetPatchDataAsync(IEnumerable<PatchSection> sections, CancellationToken token = default)
     {
-        var groupedSections = sections
-            .GroupBy(p => p.Version);
+        var groupedSections = sections.GroupBy(GetPatchVersion);
 
         var rangeTasks = new List<Task>();
 
         return Parallel.ForEachAsync(groupedSections, token, (group, token) =>
         {
-            var parts = group.Select(p => p.Location).Distinct();
+            var parts = group.DistinctBy(p => GetPatch(p));
             return GetPatchesFromVersionAsync(
                 group.Key, parts,
-                (patch, token) => ApplyQueue.Writer.WriteAsync((group.Key, patch), token),
+                (patch, token) => ApplyQueue.Writer.WriteAsync(patch, token),
                 token);
         });
     }
 
-    private ValueTask GetPatchesFromVersionAsync(ParsedVersionString version, IEnumerable<ClutPatchRef> parts, Func<PatchIntervalData, CancellationToken, ValueTask> onRangeRecieved, CancellationToken token = default)
+    private ValueTask GetPatchesFromVersionAsync(ParsedVersionString version, IEnumerable<PatchSection> parts, Func<PatchIntervalData, CancellationToken, ValueTask> onRangeRecieved, CancellationToken token = default)
     {
         Log.Info($"Partially downloading {version}");
 
-        // We can't use RangeHeaderValue because it adds a space after the comma
-        // Akamai restricts the range header size to at most 1034 bytes from my testing,
-        // but it doesn't work sometimes, so use a smaller number
-
         List<MergedRange> mergedParts = [];
-        foreach (var part in parts.OrderBy(p => p.Offset))
+        foreach (var part in parts.OrderBy(p => GetPatch(p).Offset))
         {
             var last = mergedParts.LastOrDefault();
-            if (last is null || !last.Add(part))
-                mergedParts.Add(new(part));
+            var patch = GetPatch(part);
+            if (last is null || !last.Add(part, patch))
+                mergedParts.Add(new(part, patch));
         }
 
         var ranges = new List<(List<MergedRange> MergedRanges, RangeHeaderValue Header)>();
@@ -251,10 +287,10 @@ public sealed class ClutPatcher : IDisposable
         return new(ret);
     }
 
-    private static async IAsyncEnumerable<PatchIntervalData> ProcessStreamIntervalsAsync(long streamPos, Stream stream, IEnumerable<ClutPatchRef> patches, [EnumeratorCancellation] CancellationToken token = default)
+    private async IAsyncEnumerable<PatchIntervalData> ProcessStreamIntervalsAsync(long streamPos, Stream stream, IEnumerable<PatchSection> patches, [EnumeratorCancellation] CancellationToken token = default)
     {
         // Sort intervals by start to process sequentially.
-        var sortedIntervals = patches.OrderBy(i => i.Offset).ToList();
+        var sortedIntervals = patches.OrderBy(i => GetPatch(i).Offset).ToList();
         var index = 0;
         var currentPos = streamPos;
         const int SkipBufferSize = 1 << 18;
@@ -264,17 +300,20 @@ public sealed class ClutPatcher : IDisposable
         while (index < sortedIntervals.Count)
         {
             // Start a new union segment.
-            var unionStart = sortedIntervals[index].Offset;
-            var unionEnd = sortedIntervals[index].End;
-            List<ClutPatchRef> unionIntervals = [sortedIntervals[index]];
+            var unionPatch = GetPatch(sortedIntervals[index]);
+            var unionStart = unionPatch.Offset;
+            var unionEnd = unionPatch.End;
+            List<PatchSection> unionIntervals = [sortedIntervals[index]];
             index++;
 
             // Merge all intervals that overlap with this union.
-            while (index < sortedIntervals.Count &&
-                   sortedIntervals[index].Offset <= unionEnd)
+            while (index < sortedIntervals.Count)
             {
+                var p = GetPatch(sortedIntervals[index]);
+                if (p.Offset > unionEnd)
+                    break;
                 unionIntervals.Add(sortedIntervals[index]);
-                unionEnd = Math.Max(unionEnd, sortedIntervals[index].End);
+                unionEnd = Math.Max(unionEnd, p.End);
                 index++;
             }
 
@@ -312,12 +351,25 @@ public sealed class ClutPatcher : IDisposable
             // Yield each interval from the union by slicing the unionBuffer.
             foreach (var patch in unionIntervals)
             {
-                var relativeStart = (int)(patch.Offset - unionStart);
-                var relativeLength = patch.Size;
-                yield return await PatchIntervalData.CreateAsync(patch, unionBuffer.AsMemory(relativeStart, relativeLength), token).ConfigureAwait(false);
+                var p = GetPatch(patch);
+                var relativeStart = (int)(p.Offset - unionStart);
+                var relativeLength = p.Size;
+                yield return await PatchIntervalData.CreateAsync(patch, p, unionBuffer.AsMemory(relativeStart, relativeLength), token).ConfigureAwait(false);
             }
         }
     }
+
+    private ParsedVersionString GetPatchVersion(PatchSection section) =>
+        GetRef(section.DataRef).AppliedVersion;
+
+    private ClutPatchRef GetPatch(PatchSection section) =>
+        GetRef(section.DataRef).Patch!.Value;
+
+    private string GetRefName(DataReference reference) =>
+        FileNames[reference.FileNameIdx];
+
+    private ClutDataRef GetRef(DataReference reference) =>
+        Diff.AddedFiles[GetRefName(reference)][reference.DataRefIdx];
 
     public void Dispose()
     {
