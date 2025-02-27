@@ -127,6 +127,11 @@ jobs:
         run: |
           build/FFXIVDownloader.Command --verbose --debug clut -s "${{matrix.slug}}" -b "luts/${{matrix.slug}}" -o "cluts/${{matrix.slug}}" -c Brotli
 
+      - name: Extract branch name
+        id: extract_branch
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+
       - name: Commit Changes
         id: commit
         continue-on-error: true
@@ -141,11 +146,11 @@ jobs:
         if: ${{steps.commit.conclusion == 'success'}}
         run: |
           git fetch origin
-          git rebase -X theirs origin/${{github.ref}}
+          git rebase -X theirs origin/${{steps.extract_branch.outputs.branch}}
 
       - name: Push Changes
         if: ${{steps.fetch.conclusion == 'success'}}
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
-          branch: ${{github.ref}}
+          branch: ${{steps.extract_branch.outputs.branch}}
