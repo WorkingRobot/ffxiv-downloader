@@ -23,4 +23,4 @@ jobs:
         uses: ./
         with:
           output-path: data
-          file-regex: '^sqpack\/ffxiv\/0a0000\..+$'
+          regex: '^sqpack\/ffxiv\/0a0000\..+$'

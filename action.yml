@@ -37,20 +37,20 @@ runs:
   args:
     - '--gha'
     - '--verbose'
-    - ${{inputs.verbose}}
+    - '${{inputs.verbose}}'
     - '--debug'
-    - ${{inputs.debug}}
+    - '${{inputs.debug}}'
     - 'download'
     - '-s'
-    - ${{inputs.slug}}
+    - '${{inputs.slug}}'
     - '-v'
-    - ${{inputs.version}}
+    - '${{inputs.version}}'
     - '-f'
-    - ${{inputs.regex}}
+    - '${{inputs.regex}}'
     - '-o'
-    - ${{inputs.output-path}}
+    - '${{inputs.output-path}}'
     - '-c'
-    - ${{inputs.clut-path}}/${{inputs.slug}}
+    - '${{inputs.clut-path}}/${{inputs.slug}}'
 branding:
   color: red
   icon: download-cloud
