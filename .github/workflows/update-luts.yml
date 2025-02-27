@@ -115,6 +115,10 @@ jobs:
           name: build-data
           path: build
 
+      - name: chmod Executable
+        run: |
+          chmod +x build/FFXIVDownloader.Command
+
       - name: Retrieve LUTs
         run: |
           build/FFXIVDownloader.Command --verbose lut -s "${{matrix.slug}}" -o "luts/${{matrix.slug}}" -c Brotli
