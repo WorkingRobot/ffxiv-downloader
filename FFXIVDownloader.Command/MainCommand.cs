@@ -5,6 +5,11 @@ namespace FFXIVDownloader.Command;
 [CliCommand]
 public class MainCommand
 {
+    public static bool IsGHA;
+
+    [CliOption(Required = false, Hidden = true, Name = "--gha")]
+    public bool IsGithubActions { get; set; } = false;
+
     [CliOption(Required = false, Description = "Enables verbose logging.")]
     public bool Verbose { get; set; }
 
@@ -25,6 +30,9 @@ public class MainCommand
         Log.Info($"Verbose: {Log.IsVerboseEnabled}; Debug: {Log.IsDebugEnabled}");
 
         PatchClient.OverridePath = PatchOverridePath;
+        IsGHA = IsGithubActions;
+        if (IsGHA)
+            Log.Info("Running in CI/CD mode. o/");
 
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (sender, eventArgs) =>

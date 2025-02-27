@@ -80,4 +80,20 @@ public static class Log
     {
         Output(obj.ToString() ?? "null");
     }
+
+    //
+
+    public static void CIOutput(string key, string value) =>
+        WriteToEnv("GITHUB_OUTPUT", $"{key}={value}");
+
+    private static void WriteToEnv(string variable, string text)
+    {
+        if (Environment.GetEnvironmentVariable(variable) is { } file)
+        {
+            using var writer = new StreamWriter(file);
+            writer.WriteLine(text);
+        }
+        else
+            Output($"{variable} => {text}");
+    }
 }

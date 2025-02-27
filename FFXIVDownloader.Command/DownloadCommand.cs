@@ -15,6 +15,9 @@ public class DownloadCommand
     [CliOption(Required = true, Description = "The slug of the repository.")]
     public required string Slug { get; set; }
 
+    [CliOption(Required = false, Description = "Whether to use an additional .cachemeta.json file in the directory to manage version state. If used, downloads will always start from scratch.")]
+    public bool SkipCache { get; set; }
+
     [CliOption(Required = false, Description = "The version to download. If blank, the latest version will be downloaded.")]
     public string? Version { get; set; }
 
@@ -48,13 +51,13 @@ public class DownloadCommand
         Log.Verbose($"  Description: {meta.Description}");
         Log.Verbose($"  Latest Version: {meta.LatestVersion?.VersionString}");
 
-        var version = Version != null ? new ParsedVersionString(Version) : meta.LatestVersion!.VersionString;
+        var version = !string.IsNullOrWhiteSpace(Version) ? new ParsedVersionString(Version) : meta.LatestVersion!.VersionString;
         Log.Info($"Downloading version {version}");
 
         Log.Verbose($"Downloading patch chain");
         var chain = await thaliak.GetPatchChainAsync(Slug, version, token).ConfigureAwait(false);
 
-        var cache = await CacheMetadata.GetAsync(OutputPath).ConfigureAwait(false);
+        var cache = SkipCache ? new() : await CacheMetadata.GetAsync(OutputPath).ConfigureAwait(false);
         if (cache.FilteredFiles.Any(RegexMatches))
             throw new InvalidOperationException("Some files were filtered out from previous patches. Please delete the output directory and try again.");
 
@@ -71,20 +74,22 @@ public class DownloadCommand
                 break;
         }
 
-        using var patchClient = new PatchClient(10);
+        if (chain.Count == 0)
+        {
+            Log.CIOutput("updated", "false");
+            Log.CIOutput("version", installedVersion.ToString());
+            return;
+        }
 
-        //await Parallel.ForEachAsync(chain, async (val, token) =>
-        //{
-        //    var h = await patchClient.GetPatchAsync(val.Patch.Url, val.Version, token).ConfigureAwait(false);
-        //    using var s = new FileStream($"./patch-data/{val.Version:P}.patch", FileMode.CreateNew, FileAccess.Write);
-        //    await h.CopyToAsync(s, token).ConfigureAwait(false);
-        //});
-        //return;
+        using var patchClient = new PatchClient(10);
 
         if (!string.IsNullOrWhiteSpace(ClutPath))
             await TryDownloadFromClut(patchClient, installedVersion, chain, cache, token).ConfigureAwait(false);
         else
             await TryDownloadFromRemote(patchClient, chain, cache, token).ConfigureAwait(false);
+
+        Log.CIOutput("updated", "true");
+        Log.CIOutput("version", chain[^1].Version.ToString());
     }
 
     private Regex[]? Regexes { get; set; }
@@ -156,14 +161,17 @@ public class DownloadCommand
         cache.InstalledVersions.AddRange(chain.Select(v => v.Version.ToString("P")));
         cache.FilteredFiles.Clear();
         cache.FilteredFiles.AddRange(config.FilteredFiles);
-        Log.Debug($"Writing out cache");
-        await cache.WriteAsync(OutputPath).ConfigureAwait(false);
+        if (!SkipCache)
+        {
+            Log.Debug($"Writing out cache");
+            await cache.WriteAsync(OutputPath).ConfigureAwait(false);
+        }
         Log.Verbose($"Installed version {latestVersion}");
     }
 
     private async Task TryDownloadFromRemote(PatchClient patchClient, List<(ParsedVersionString Version, Patch Patch)> chain, CacheMetadata cache, CancellationToken token)
     {
-        Log.Info($"Total Size: {chain.Sum(p => p.Patch.Size) / (double)(1 << 30):0.00} GiB");
+        Log.Info($"Total Download Size: {chain.Sum(p => p.Patch.Size) / (double)(1 << 30):0.00} GiB");
 
         foreach (var (ver, patch) in chain)
         {
@@ -192,8 +200,11 @@ public class DownloadCommand
             cache.InstalledVersions.Add(ver.ToString("P"));
             cache.FilteredFiles.Clear();
             cache.FilteredFiles.AddRange(config.FilteredFiles);
-            Log.Debug($"Writing out cache");
-            await cache.WriteAsync(OutputPath).ConfigureAwait(false);
+            if (!SkipCache)
+            {
+                Log.Debug($"Writing out cache");
+                await cache.WriteAsync(OutputPath).ConfigureAwait(false);
+            }
             Log.Verbose($"Installed version {ver}");
         }
     }
