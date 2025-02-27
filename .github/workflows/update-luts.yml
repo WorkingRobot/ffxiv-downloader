@@ -94,26 +94,26 @@ jobs:
         run: |
           build/FFXIVDownloader.Command --verbose --debug clut -s "${{matrix.slug}}" -b "luts/${{matrix.slug}}" -o "cluts/${{matrix.slug}}" -c Brotli
 
-    - name: Commit Changes
-      id: commit
-      continue-on-error: true
-      run: |
-        git config user.name github-actions[bot]
-        git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-        git add .
-        git commit -m "Update Lookups for ${{matrix.slug}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
+      - name: Commit Changes
+        id: commit
+        continue-on-error: true
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .
+          git commit -m "Update Lookups for ${{matrix.slug}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
 
-    - name: Fetch and Rebase
-      id: fetch
-      continue-on-error: true
-      if: ${{steps.commit.conclusion == 'success'}}
-      run: |
-        git fetch origin
-        git rebase -X theirs origin/${{github.ref}}
+      - name: Fetch and Rebase
+        id: fetch
+        continue-on-error: true
+        if: ${{steps.commit.conclusion == 'success'}}
+        run: |
+          git fetch origin
+          git rebase -X theirs origin/${{github.ref}}
 
-    - name: Push Changes
-      if: ${{steps.fetch.conclusion == 'success'}}
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{secrets.GITHUB_TOKEN}}
-        branch: ${{github.ref}}
+      - name: Push Changes
+        if: ${{steps.fetch.conclusion == 'success'}}
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          branch: ${{github.ref}}
