@@ -35,40 +35,60 @@ jobs:
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with:
-          name: build
+          name: build-data
           path: FFXIVDownloader.Command/bin/Release/net9.0/publish
           if-no-files-found: error
 
   download:
-    name: Download LUTs
+    name: Download LUTs (${{matrix.name}})
     runs-on: ubuntu-latest
     needs: build
 
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
-        slugs:
-          - 2b5cbc63 # boot
-          - 4e9a232b # ffxiv
-          - 6b936f08 # ex1
-          - f29a3eb2 # ex2
-          - 859d0e24 # ex3
-          - 1bf99b87 # ex4
-          - 6cfeab11 # ex5
+        include:
+        - slug: 2b5cbc63
+          name: global/boot
+        - slug: 4e9a232b
+          name: global/ffxiv
+        - slug: 6b936f08
+          name: global/ex1
+        - slug: f29a3eb2
+          name: global/ex2
+        - slug: 859d0e24
+          name: global/ex3
+        - slug: 1bf99b87
+          name: global/ex4
+        - slug: 6cfeab11
+          name: global/ex5
 
-          - de199059 # Korea ffxiv
-          - 573d8c07 # Korea ex1
-          - ce34ddbd # Korea ex2
-          - b933ed2b # Korea ex3
-          - '27577888' # Korea ex4
-          - 5050481e # Korea ex5
+        - slug: de199059
+          name: korea/ffxiv
+        - slug: 573d8c07
+          name: korea/ex1
+        - slug: ce34ddbd
+          name: korea/ex2
+        - slug: b933ed2b
+          name: korea/ex3
+        - slug: '27577888'
+          name: korea/ex4
+        - slug: 5050481e
+          name: korea/ex5
 
-          - c38effbc # China ffxiv
-          - 77420d17 # China ex1
-          - ee4b5cad # China ex2
-          - 994c6c3b # China ex3
-          - 0728f998 # China ex4
-          - 702fc90e # China ex5
+        - slug: c38effbc
+          name: china/ffxiv
+        - slug: 77420d17
+          name: china/ex1
+        - slug: ee4b5cad
+          name: china/ex2
+        - slug: 994c6c3b
+          name: china/ex3
+        - slug: 0728f998
+          name: china/ex4
+        - slug: 702fc90e
+          name: china/ex5
 
     steps:
       - name: Checkout
@@ -84,7 +104,7 @@ jobs:
       - name: Download Build
         uses: actions/download-artifact@v4
         with:
-          name: build
+          name: build-data
 
       - name: Retrieve LUTs
         run: |
@@ -101,7 +121,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add .
-          git commit -m "Update Lookups for ${{matrix.slug}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
+          git commit -m "Update Lookups for ${{matrix.name}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
 
       - name: Fetch and Rebase
         id: fetch
