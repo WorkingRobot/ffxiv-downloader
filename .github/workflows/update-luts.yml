@@ -150,6 +150,7 @@ jobs:
           command: |
             git push origin ${{steps.extract_branch.outputs.branch}}
           new_command_on_retry: |
+            git stash
             git fetch origin
             git rebase -X theirs origin/${{steps.extract_branch.outputs.branch}}
             git push origin ${{steps.extract_branch.outputs.branch}}
