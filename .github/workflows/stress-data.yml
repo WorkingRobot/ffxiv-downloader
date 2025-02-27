@@ -1,7 +1,7 @@
 name: Sqpack-040000
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore:
       - 'README.md'
 
@@ -9,11 +9,8 @@ jobs:
   download:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Run downloader
-        id: downloader
         uses: ./
         with:
-          output-path: ./data
-          file-regex: '^sqpack\/ffxiv\/040000\..+$'
+          output-path: data
+          regex: '^sqpack\/ffxiv\/040000\..+$'
