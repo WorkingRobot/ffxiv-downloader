@@ -120,8 +120,12 @@ jobs:
           chmod +x build/FFXIVDownloader.Command
 
       - name: Retrieve LUTs
-        run: |
-          build/FFXIVDownloader.Command --verbose lut -s "${{matrix.slug}}" -o "luts/${{matrix.slug}}" -c Brotli
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          command: |
+            build/FFXIVDownloader.Command --verbose lut -s "${{matrix.slug}}" -o "luts/${{matrix.slug}}" -c Brotli
 
       - name: Calculate CLUTs
         run: |
