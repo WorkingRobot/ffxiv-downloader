@@ -54,7 +54,6 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 6
       matrix:
         include:
         - slug: 2b5cbc63
@@ -141,16 +140,15 @@ jobs:
           git add .
           git commit -m "Update Lookups for ${{matrix.name}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
 
-      - name: Fetch and Rebase
-        id: fetch
+      - name: Fetch, Rebase, and Push
+        uses: nick-fields/retry@v3
         if: ${{steps.commit.conclusion == 'success'}}
-        run: |
-          git fetch origin
-          git rebase -X theirs origin/${{steps.extract_branch.outputs.branch}}
-
-      - name: Push Changes
-        if: ${{steps.fetch.conclusion == 'success'}}
-        uses: ad-m/github-push-action@master
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          branch: ${{steps.extract_branch.outputs.branch}}
+          timeout_minutes: 2
+          max_attempts: 20
+          command: |
+            git push origin ${{steps.extract_branch.outputs.branch}}
+          new_command_on_retry: |
+            git fetch origin
+            git rebase -X theirs origin/${{steps.extract_branch.outputs.branch}}
+            git push origin ${{steps.extract_branch.outputs.branch}}
