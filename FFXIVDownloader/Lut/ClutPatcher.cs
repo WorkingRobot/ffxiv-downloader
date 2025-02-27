@@ -23,18 +23,19 @@ public sealed class ClutPatcher : IDisposable
 
     private PatchClient Client { get; }
     private string[] FileNames { get; }
-    private Channel<PatchIntervalData> ApplyQueue { get; } = Channel.CreateBounded<PatchIntervalData>(new BoundedChannelOptions(16)
-    {
-        FullMode = BoundedChannelFullMode.Wait,
-        SingleReader = true
-    });
+    private Channel<PatchIntervalData> ApplyQueue { get; }
     
+    // Reference to a ClutDataRef
     private readonly record struct DataReference(int FileNameIdx, int DataRefIdx);
 
+    // Reference to a ClutPatchRef
     private readonly record struct PatchSection(DataReference DataRef);
 
+    // Reference to a ClutDataRef with its corresponding data (if it contains a ClutPatchRef)
     private readonly record struct DataRefOperation(DataReference DataRef, PatchIntervalData? PatchData);
 
+    // Represents a unioned range of ClutPatchRefs with a max distance between them being MIN_RANGE_DISTANCE
+    // Used to merge http range requests because Akamai assumes too little distance to be possibly malicious
     private sealed class MergedRange(PatchSection part, ClutPatchRef patchRef)
     {
         public long Offset { get; } = patchRef.Offset;
@@ -52,6 +53,8 @@ public sealed class ClutPatcher : IDisposable
         }
     }
 
+    // Represents a ClutPatchRef with its corresponding data
+    // Automatically decompresses data if needed
     private sealed class PatchIntervalData(PatchSection interval, ReadOnlyMemory<byte> fileData)
     {
         public PatchSection Interval { get; } = interval;
@@ -88,15 +91,29 @@ public sealed class ClutPatcher : IDisposable
 
         Client = new(10);
         FileNames = [.. Diff.AddedFiles.Keys];
+        ApplyQueue = Channel.CreateBounded<PatchIntervalData>(new BoundedChannelOptions(Concurrency * 2)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true
+        });
     }
 
-    public Task ApplyAsync(ZiPatchConfig config, CancellationToken token = default)
+    public async Task ApplyAsync(ZiPatchConfig config, CancellationToken token = default)
     {
-        return Parallel.ForEachAsync(
+        foreach (var removedFile in Diff.RemovedFiles)
+            await config.DeleteFile(removedFile).ConfigureAwait(false);
+
+        foreach (var removedFolder in Diff.RemovedFolders)
+            await config.DeleteDirectory(removedFolder).ConfigureAwait(false);
+
+        foreach (var addedFolder in Diff.AddedFolders)
+            await config.CreateDirectory(addedFolder).ConfigureAwait(false);
+
+        await Parallel.ForEachAsync(
             GetDataRefsAsync(token),
             new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = Concurrency },
             (operation, token) => ApplyDataRefAsync(config, GetRefName(operation.DataRef), GetRef(operation.DataRef), operation.PatchData?.Data, token)
-        );
+        ).ConfigureAwait(false);
     }
 
     private static async ValueTask ApplyDataRefAsync(ZiPatchConfig config, string path, ClutDataRef dataRef, ReadOnlyMemory<byte>? patchData = null, CancellationToken token = default)
