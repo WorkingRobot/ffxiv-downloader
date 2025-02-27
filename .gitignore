@@ -2,7 +2,6 @@
 obj/
 bin/
 *.user
-/*.sln
 
 out-test/
 *.patch
