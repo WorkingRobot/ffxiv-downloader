@@ -3,7 +3,6 @@ using FFXIVDownloader.Lut;
 using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
 using FFXIVDownloader.ZiPatch.Config;
-using System.Runtime.ConstrainedExecution;
 using System.Text.RegularExpressions;
 
 namespace FFXIVDownloader.Command;

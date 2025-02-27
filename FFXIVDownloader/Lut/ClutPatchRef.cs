@@ -1,5 +1,3 @@
-using FFXIVDownloader.Thaliak;
-
 namespace FFXIVDownloader.Lut;
 
 public readonly record struct ClutPatchRef

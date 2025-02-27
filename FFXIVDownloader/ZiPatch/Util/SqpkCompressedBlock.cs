@@ -4,7 +4,6 @@
  */
 
 using System.IO.Compression;
-using System.Net.Http.Headers;
 using DotNext;
 using DotNext.IO;
 using FFXIVDownloader.ZiPatch.Chunk;

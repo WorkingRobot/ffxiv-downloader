@@ -1,4 +1,3 @@
-using System.Net;
 using DotMake.CommandLine;
 using FFXIVDownloader.Lut;
 using FFXIVDownloader.Thaliak;

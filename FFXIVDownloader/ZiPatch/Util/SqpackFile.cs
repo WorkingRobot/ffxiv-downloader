@@ -1,10 +1,8 @@
-﻿/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
+/* Copyright (c) FFXIVQuickLauncher https://github.com/goatcorp/FFXIVQuickLauncher/blob/master/LICENSE
  *
  * Modified to fit the needs of the project.
  */
 
-using FFXIVDownloader.ZiPatch.Util;
-using FFXIVDownloader.ZiPatch.Config;
 using static FFXIVDownloader.ZiPatch.Config.ZiPatchConfig;
 
 namespace FFXIVDownloader.ZiPatch.Util;
