@@ -1,8 +1,8 @@
 .vs/
 obj/
 bin/
+build/
 *.user
 
-/web/target
-/web/postgres-data
-/web/.secrets.env
+out-test/
+*.patch

@@ -1,0 +1,161 @@
+name: Update Lookup Tables
+on:
+  cron: '23 */2 * * *' # Every 2 hours at :23
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0'
+
+      - name: Restore
+        run: |
+          dotnet restore
+
+      - name: Build
+        run: |
+          dotnet publish -c Release --no-restore -o build
+
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-data
+          path: build
+          if-no-files-found: error
+
+  download:
+    name: Download LUTs (${{matrix.name}})
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      actions: write
+      contents: write
+
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+        - slug: 2b5cbc63
+          name: global/boot
+        - slug: 4e9a232b
+          name: global/ffxiv
+        - slug: 6b936f08
+          name: global/ex1
+        - slug: f29a3eb2
+          name: global/ex2
+        - slug: 859d0e24
+          name: global/ex3
+        - slug: 1bf99b87
+          name: global/ex4
+        - slug: 6cfeab11
+          name: global/ex5
+
+        - slug: de199059
+          name: korea/ffxiv
+        - slug: 573d8c07
+          name: korea/ex1
+        - slug: ce34ddbd
+          name: korea/ex2
+        - slug: b933ed2b
+          name: korea/ex3
+        - slug: '27577888'
+          name: korea/ex4
+        - slug: 5050481e
+          name: korea/ex5
+
+        - slug: c38effbc
+          name: china/ffxiv
+        - slug: 77420d17
+          name: china/ex1
+        - slug: ee4b5cad
+          name: china/ex2
+        - slug: 994c6c3b
+          name: china/ex3
+        - slug: 0728f998
+          name: china/ex4
+        - slug: 702fc90e
+          name: china/ex5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0'
+
+      - name: Download Build
+        uses: actions/download-artifact@v4.1.0
+        with:
+          name: build-data
+          path: build
+
+      - name: chmod Executable
+        run: |
+          chmod +x build/FFXIVDownloader.Command
+
+      - name: Retrieve LUTs
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          command: |
+            build/FFXIVDownloader.Command --verbose lut -s "${{matrix.slug}}" -o "luts/${{matrix.slug}}" -c Brotli
+
+      - name: Calculate CLUTs
+        run: |
+          build/FFXIVDownloader.Command --verbose --debug clut -s "${{matrix.slug}}" -b "luts/${{matrix.slug}}" -o "cluts/${{matrix.slug}}" -c Brotli
+
+      - name: Extract branch name
+        id: extract_branch
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+
+      - name: Commit Changes
+        id: commit
+        continue-on-error: true
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .
+          git commit -m "Update Lookups for ${{matrix.name}}" --author="${{github.actor}} <${{github.actor}}@users.noreply.github.com>"
+
+      - name: Fetch, Rebase, and Push
+        uses: nick-fields/retry@v3
+        if: ${{steps.commit.conclusion == 'success'}}
+        with:
+          timeout_minutes: 2
+          max_attempts: 20
+          command: |
+            git push origin ${{steps.extract_branch.outputs.branch}}
+          new_command_on_retry: |
+            git stash
+            git fetch origin
+            git rebase -X theirs origin/${{steps.extract_branch.outputs.branch}}
+            git push origin ${{steps.extract_branch.outputs.branch}}

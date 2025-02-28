@@ -2,31 +2,60 @@ name: 'FFXIV Downloader'
 author: WorkingRobot
 description: 'Download and keep track of any files from FFXIV'
 inputs:
-  repository-slug:
+  slug:
     description: 'Slug of the repository to download from. Thaliak holds a list of all repositories and their slugs. Defaults to 4e9a232b, which is the Win32 Global/JP base game.'
     default: '4e9a232b'
-  current-version:
-    description: 'Version of the currently downloaded files. Will be cached and retrieved from {output-path}/cached-ver.txt if omitted.'
+  version:
+    description: 'Version to download'
     default: ''
   output-path:
     description: 'Path to download files to. Defaults to .'
     default: '.'
-  file-regex:
+  regex:
     description: 'Regex to match files to download. Defaults to .*, which matches all files. Retroactively changing this should invalidate any cached files.'
     default: '.*'
+  parallelism:
+    description: 'Number of concurrent threads to use for updating.'
+    default: 4
+  clut-path:
+    description: 'Path to a directory or base url where CLUT files can be retrieved from.'
+    default: 'https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/main/cluts'
+  skip-cache:
+    description: 'Whether to skip making a .cachemeta.json file. Defaults to false. If true, downloads will always start from scratch.'
+    default: false
+  debug:
+    description: Enables debug logging
+    default: false
+  verbose:
+    description: Enables verbose logging
+    default: true
 outputs:
-  updated-files:
-    description: 'Semicolon separated list of files updated.'
-  latest-version:
+  updated:
+    description: 'Whether or not an update was issued.'
+  version:
     description: 'Version of the repository after the update.'
 runs:
   using: 'docker'
   image: 'Dockerfile'
   args:
-    - ${{ inputs.repository-slug }}
-    - ${{ inputs.current-version }}
-    - ${{ inputs.output-path }}
-    - ${{ inputs.file-regex }}
+    - '--gha'
+    - '--verbose'
+    - '${{inputs.verbose}}'
+    - '--debug'
+    - '${{inputs.debug}}'
+    - 'download'
+    - '-s'
+    - '${{inputs.slug}}'
+    - '-v'
+    - '${{inputs.version}}'
+    - '-f'
+    - '${{inputs.regex}}'
+    - '-p'
+    - '${{inputs.parallelism}}'
+    - '-o'
+    - '${{inputs.output-path}}'
+    - '-c'
+    - '${{inputs.clut-path}}/${{inputs.slug}}'
 branding:
   color: red
   icon: download-cloud

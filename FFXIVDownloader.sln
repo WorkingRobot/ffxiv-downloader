@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35818.85
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FFXIVDownloader", "FFXIVDownloader\FFXIVDownloader.csproj", "{42DE29B2-F0C4-A4AE-1233-544E7783B899}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FFXIVDownloader.Command", "FFXIVDownloader.Command\FFXIVDownloader.Command.csproj", "{A6C72CAF-C26B-DDE7-243A-84B2D03C9ABF}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{42DE29B2-F0C4-A4AE-1233-544E7783B899}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{42DE29B2-F0C4-A4AE-1233-544E7783B899}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{42DE29B2-F0C4-A4AE-1233-544E7783B899}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{42DE29B2-F0C4-A4AE-1233-544E7783B899}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6C72CAF-C26B-DDE7-243A-84B2D03C9ABF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6C72CAF-C26B-DDE7-243A-84B2D03C9ABF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6C72CAF-C26B-DDE7-243A-84B2D03C9ABF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6C72CAF-C26B-DDE7-243A-84B2D03C9ABF}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {18D86E46-18EB-4BEA-B883-31F96142BED0}
+	EndGlobalSection
+EndGlobal

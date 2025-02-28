@@ -1,7 +1,7 @@
 name: EXD Files
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore:
       - 'README.md'
 
@@ -19,8 +19,7 @@ jobs:
           key: exd-files-data
 
       - name: Run downloader
-        id: downloader
         uses: ./
         with:
-          output-path: ./data
-          file-regex: '^sqpack\/ffxiv\/0a0000\..+$'
+          output-path: data
+          regex: '^sqpack\/ffxiv\/0a0000\..+$'
