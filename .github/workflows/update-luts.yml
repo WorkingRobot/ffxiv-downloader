@@ -1,6 +1,7 @@
 name: Update Lookup Tables
 on:
-  cron: '23 */2 * * *' # Every 2 hours at :23
+  schedule:
+    - cron: '23 */2 * * *' # Every 2 hours at :23
   push:
     branches: [main]
     paths-ignore:
