@@ -36,7 +36,7 @@ jobs:
 
       - name: Build
         run: |
-          dotnet publish -c Release --no-restore -o build
+          dotnet publish -c Release --no-restore -o build FFXIVDownloader.Command
 
       - name: Upload Build
         uses: actions/upload-artifact@v4
