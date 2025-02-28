@@ -1,10 +1,11 @@
 name: Update Lookup Tables
 on:
+  cron: '23 */2 * * *' # Every 2 hours at :23
   push:
-    branches: [main, dev]
+    branches: [main]
     paths-ignore:
       - 'README.md'
-    workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
   build:

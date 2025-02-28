@@ -5,6 +5,7 @@
 <h3 align="center">Download and keep track of any files from FFXIV</h3>
 
 <div align="center">
+  <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/update-luts.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/update-luts.yml/badge.svg" alt="Update Lookup Tables"></a>
   <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/exd-files.yml/badge.svg" alt="EXD Files"></a>
   <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/movies.yml/badge.svg" alt="Movies"></a>
   <a href="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml"><img src="https://github.com/WorkingRobot/ffxiv-downloader/actions/workflows/stress-data.yml/badge.svg" alt="Sqpack-040000"></a>
