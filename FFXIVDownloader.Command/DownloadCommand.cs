@@ -3,6 +3,7 @@ using FFXIVDownloader.Lut;
 using FFXIVDownloader.Thaliak;
 using FFXIVDownloader.ZiPatch;
 using FFXIVDownloader.ZiPatch.Config;
+using FFXIVDownloader.ZiPatch.Util;
 using System.Text.RegularExpressions;
 
 namespace FFXIVDownloader.Command;
@@ -180,7 +181,8 @@ public class DownloadCommand
             Log.Verbose($"  Size: {patch.Size / (double)(1 << 20):0.00} MiB");
 
             using var httpStream = await patchClient.GetPatchAsync(patch.Url, ver, token).ConfigureAwait(false);
-            using var patchStream = new BufferedStream(httpStream, 1 << 20);
+            using var bufStream = new BufferedStream(httpStream, 1 << 20);
+            using var patchStream = new PositionedStream(bufStream);
 
             await using var config = new FilteredZiPatchConfig<PersistentZiPatchConfig>(
                 new(OutputPath),
@@ -188,7 +190,7 @@ public class DownloadCommand
                 cache.FilteredFiles
             );
 
-            using (var file = new ZiPatchFile(httpStream))
+            using (var file = new ZiPatchFile(patchStream))
             {
                 await foreach (var chunk in file.GetChunksAsync(token).WithCancellation(token).ConfigureAwait(false))
                 {

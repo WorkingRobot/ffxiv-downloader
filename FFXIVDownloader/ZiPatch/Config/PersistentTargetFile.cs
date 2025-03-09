@@ -1,19 +1,21 @@
+using Microsoft.Win32.SafeHandles;
+
 namespace FFXIVDownloader.ZiPatch.Config;
 
 public sealed class PersistentTargetFile(string filePath) : ITargetFile
 {
-    private FileStream Stream { get; } =
-        new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read, 1 << 16, true);
+    private SafeFileHandle Handle { get; } =
+       File.OpenHandle(filePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read, FileOptions.RandomAccess | FileOptions.Asynchronous);
 
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, long offset, CancellationToken token = default) =>
-        RandomAccess.WriteAsync(Stream.SafeFileHandle, data, offset, token);
+        RandomAccess.WriteAsync(Handle, data, offset, token);
 
     public ValueTask TruncateAsync(CancellationToken token)
     {
-        RandomAccess.SetLength(Stream.SafeFileHandle, 0);
+        RandomAccess.SetLength(Handle, 0);
         return ValueTask.CompletedTask;
     }
 
     public void Dispose() =>
-        Stream.Dispose();
+        Handle.Dispose();
 }

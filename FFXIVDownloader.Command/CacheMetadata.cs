@@ -17,11 +17,11 @@ public sealed record CacheMetadata
         return await JsonSerializer.DeserializeAsync<CacheMetadata>(stream).ConfigureAwait(false) ?? new();
     }
 
-    public Task WriteAsync(string outputPath)
+    public async Task WriteAsync(string outputPath)
     {
         var path = Path.Join(outputPath, ".cachemeta.json");
 
         using var stream = File.OpenWrite(path);
-        return JsonSerializer.SerializeAsync(stream, this);
+        await JsonSerializer.SerializeAsync(stream, this).ConfigureAwait(false);
     }
 }

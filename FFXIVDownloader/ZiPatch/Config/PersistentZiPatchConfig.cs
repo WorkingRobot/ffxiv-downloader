@@ -18,10 +18,8 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
     private const int STREAM_OPEN_WAIT_MS = 1000;
     private const int STREAM_OPEN_TRIES = 1;
 
-    private string GetPath(string filePath)
-    {
-        return Path.Join(GamePath, filePath);
-    }
+    private string GetPath(string filePath) =>
+        Path.Join(GamePath, filePath);
 
     public override async Task<ITargetFile> OpenFile(string path)
     {
@@ -106,7 +104,9 @@ public sealed class PersistentZiPatchConfig(string gamePath) : ZiPatchConfig
     {
         using var sema = await SemaphoreLock.CreateAsync(Lock).ConfigureAwait(false);
 
-        foreach (var stream in Files.Values)
+        var files = new List<PersistentTargetFile>(Files.Values);
+        Files.Clear();
+        foreach (var stream in files)
             stream.Dispose();
         Files.Clear();
     }
