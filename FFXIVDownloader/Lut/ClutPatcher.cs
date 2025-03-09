@@ -24,7 +24,7 @@ public sealed class ClutPatcher : IDisposable
     private PatchClient Client { get; }
     private string[] FileNames { get; }
     private Channel<PatchIntervalData> ApplyQueue { get; }
-    
+
     // Reference to a ClutDataRef
     private readonly record struct DataReference(int FileNameIdx, int DataRefIdx);
 
@@ -230,7 +230,14 @@ public sealed class ClutPatcher : IDisposable
             {
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
                 cts.CancelAfter(5000);
-                await ApplyQueue.Reader.WaitToReadAsync(cts.Token).ConfigureAwait(false);
+                try
+                {
+                    await ApplyQueue.Reader.WaitToReadAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+
+                }
             }
             else
             {
