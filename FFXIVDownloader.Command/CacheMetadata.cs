@@ -22,6 +22,7 @@ public sealed record CacheMetadata
         var path = Path.Join(outputPath, ".cachemeta.json");
 
         using var stream = File.OpenWrite(path);
+        stream.SetLength(0);
         await JsonSerializer.SerializeAsync(stream, this).ConfigureAwait(false);
     }
 }

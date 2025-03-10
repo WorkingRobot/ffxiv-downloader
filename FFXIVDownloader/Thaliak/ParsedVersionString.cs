@@ -38,7 +38,7 @@ public readonly record struct ParsedVersionString : IComparable<ParsedVersionStr
 
         var parts = versionString.Split('.');
         if (parts.Length != 5)
-            throw new ArgumentException("Invalid version string", nameof(versionString));
+            throw new ArgumentException($"Invalid version string ({versionString})", nameof(versionString));
 
         Year = int.Parse(parts[0]);
         Month = int.Parse(parts[1]);
