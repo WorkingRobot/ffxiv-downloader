@@ -23,6 +23,12 @@ public sealed class ThaliakClient : IDisposable
                     { new("H2024.05.31.0000.0000b"), new("H2024.05.31.0000.0000a") },
                     { new("H2024.05.31.0000.0000aa"), new("H2024.05.31.0000.0000z") },
 
+                    // Spooky unseen patches o.o
+                    { new("2024.04.23.0000.0000"), new("2024.04.22.0000.0001") },
+                    { new("2024.04.22.0000.0001"), new("2024.03.27.0000.0000") },
+                    { new("2023.06.14.0000.0000"), new("2023.06.13.0000.0001") },
+                    { new("2023.06.13.0000.0001"), new("2023.05.11.0000.0001") },
+
                     { new("2017.06.06.0000.0001"), new("H2017.06.06.0000.0001m") },
                     { new("H2017.06.06.0000.0001a"), null },
                 }.ToFrozenDictionary()
@@ -107,6 +113,37 @@ public sealed class ThaliakClient : IDisposable
             },
         }.ToFrozenDictionary();
 
+    private static FrozenDictionary<string, ImmutableArray<AnnotatedVersion>> AdditionalVersions { get; } =
+        new Dictionary<string, ImmutableArray<AnnotatedVersion>>
+        {
+            { "4e9a232b", [
+                new AnnotatedVersion
+                {
+                    VersionString = new("2023.06.13.0000.0001"),
+                    IsActive = false,
+                    PrerequisiteVersions = [],
+                    Patches = [
+                        new Patch {
+                            Url = "http://patch-dl.ffxiv.com/game/4e9a232b/D2023.06.13.0000.0001.patch",
+                            Size = 89863002
+                        }
+                    ]
+                },
+                new AnnotatedVersion
+                {
+                    VersionString = new("2024.04.22.0000.0001"),
+                    IsActive = false,
+                    PrerequisiteVersions = [],
+                    Patches = [
+                        new Patch {
+                            Url = "http://patch-dl.ffxiv.com/game/4e9a232b/D2024.04.22.0000.0001.patch",
+                            Size = 16909460
+                        }
+                    ]
+                }
+            ]}
+        }.ToFrozenDictionary();
+
     public ThaliakClient()
     {
         var serializer = new SystemTextJsonSerializer();
@@ -137,7 +174,7 @@ public sealed class ThaliakClient : IDisposable
 
     public async Task<List<(ParsedVersionString Version, Patch Patch)>> GetPatchChainAsync(string slug, ParsedVersionString version, CancellationToken token = default)
     {
-        var versions = (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
+        var versionList = (await Client.SendQueryAsync<RepositoryResponse>(new GraphQLRequest
         {
             Query = @"
             query($repoId: String!) {
@@ -159,7 +196,11 @@ public sealed class ThaliakClient : IDisposable
             {
                 repoId = slug
             }
-        }, token).ConfigureAwait(false)).Data.Repository.Versions!.ToDictionary(v => v.VersionString);
+        }, token).ConfigureAwait(false)).Data.Repository.Versions!;
+
+        var additionalVersions = AdditionalVersions.GetValueOrDefault(slug);
+        versionList.AddRange(additionalVersions);
+        var versions = versionList.ToDictionary(v => v.VersionString);
 
         var overrides = Overrides.GetValueOrDefault(slug);
 
@@ -219,9 +260,12 @@ public sealed class ThaliakClient : IDisposable
             }
         }).ConfigureAwait(false)).Data.Repository.Versions!;
 
+        var additionalVersions = AdditionalVersions.GetValueOrDefault(slug);
+        versions.AddRange(additionalVersions);
+
         var treeList = versions.OrderByDescending(x => x.VersionString).ToList();
         if (filterInactive)
-            treeList = treeList.Where(x => x.IsActive).ToList();
+            treeList = [.. treeList.Where(x => x.IsActive)];
         var overrides = Overrides.GetValueOrDefault(slug);
         var b = new StringBuilder();
         b.AppendLine("digraph {");
