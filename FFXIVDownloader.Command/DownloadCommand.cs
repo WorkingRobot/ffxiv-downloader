@@ -82,6 +82,10 @@ public class DownloadCommand
             return;
         }
 
+        Log.Debug($"Chain:");
+        foreach (var ver in chain)
+            Log.Debug($"  {ver.Version:P} - {ver.Patch.Url}");
+
         using var patchClient = new PatchClient(10);
 
         if (!string.IsNullOrWhiteSpace(ClutPath))

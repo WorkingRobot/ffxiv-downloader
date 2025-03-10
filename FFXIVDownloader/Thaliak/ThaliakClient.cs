@@ -2,6 +2,7 @@ using GraphQL;
 using GraphQL.Client.Http;
 using GraphQL.Client.Serializer.SystemTextJson;
 using System.Collections.Frozen;
+using System.Collections.Immutable;
 using System.Net;
 using System.Text;
 
@@ -200,6 +201,9 @@ public sealed class ThaliakClient : IDisposable
 
         var additionalVersions = AdditionalVersions.GetValueOrDefault(slug);
         versionList.AddRange(additionalVersions);
+        foreach (var addVersion in additionalVersions)
+            Log.Verbose($"Injecting {addVersion.VersionString} into patch chain");
+
         var versions = versionList.ToDictionary(v => v.VersionString);
 
         var overrides = Overrides.GetValueOrDefault(slug);
@@ -217,6 +221,7 @@ public sealed class ThaliakClient : IDisposable
             {
                 if (@override == null)
                     break;
+                Log.Verbose($"Overriding {nextVer.VersionString} with {@override.Value}");
                 nextVer = versions.GetValueOrDefault(@override.Value);
                 ArgumentNullException.ThrowIfNull(nextVer);
                 continue;
