@@ -199,10 +199,12 @@ public sealed class ThaliakClient : IDisposable
             }
         }, token).ConfigureAwait(false)).Data.Repository.Versions!;
 
-        var additionalVersions = AdditionalVersions.GetValueOrDefault(slug);
-        versionList.AddRange(additionalVersions);
-        foreach (var addVersion in additionalVersions)
-            Log.Verbose($"Injecting {addVersion.VersionString} into patch chain");
+        if (AdditionalVersions.TryGetValue(slug, out var additionalVersions))
+        {
+            versionList.AddRange(additionalVersions);
+            foreach (var addVersion in additionalVersions)
+                Log.Verbose($"Injecting {addVersion.VersionString} into patch chain");
+        }
 
         var versions = versionList.ToDictionary(v => v.VersionString);
 
@@ -265,8 +267,8 @@ public sealed class ThaliakClient : IDisposable
             }
         }).ConfigureAwait(false)).Data.Repository.Versions!;
 
-        var additionalVersions = AdditionalVersions.GetValueOrDefault(slug);
-        versions.AddRange(additionalVersions);
+        if (AdditionalVersions.TryGetValue(slug, out var additionalVersions))
+            versions.AddRange(additionalVersions);
 
         var treeList = versions.OrderByDescending(x => x.VersionString).ToList();
         if (filterInactive)
