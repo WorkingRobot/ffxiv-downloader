@@ -1,61 +1,61 @@
-name: 'FFXIV Downloader'
+name: "FFXIV Downloader"
 author: WorkingRobot
-description: 'Download and keep track of any files from FFXIV'
+description: "Download and keep track of any files from FFXIV"
 inputs:
   slug:
-    description: 'Slug of the repository to download from. Thaliak holds a list of all repositories and their slugs. Defaults to 4e9a232b, which is the Win32 Global/JP base game.'
-    default: '4e9a232b'
+    description: "Slug of the repository to download from. Thaliak holds a list of all repositories and their slugs. Defaults to 4e9a232b, which is the Win32 Global/JP base game."
+    default: "4e9a232b"
   version:
-    description: 'Version to download'
-    default: ''
+    description: "Version to download"
+    default: ""
   output-path:
-    description: 'Path to download files to. Defaults to .'
-    default: '.'
+    description: "Path to download files to. Defaults to ."
+    default: "."
   regex:
-    description: 'Regex to match files to download. Defaults to .*, which matches all files. Retroactively changing this should invalidate any cached files.'
-    default: '.*'
+    description: "Regex to match files to download. Defaults to .*, which matches all files. Retroactively changing this should invalidate any cached files."
+    default: ".*"
   parallelism:
-    description: 'Number of concurrent threads to use for updating.'
-    default: 4
+    description: "Number of concurrent threads to use for updating."
+    default: "4"
   clut-path:
-    description: 'Path to a directory or base url where CLUT files can be retrieved from.'
-    default: 'https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/main/cluts'
+    description: "Path to a directory or base url where CLUT files can be retrieved from."
+    default: "https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/main/cluts"
   skip-cache:
-    description: 'Whether to skip making a .cachemeta.json file. Defaults to false. If true, downloads will always start from scratch.'
-    default: false
+    description: "Whether to skip making a .cachemeta.json file. Defaults to false. If true, downloads will always start from scratch."
+    default: "false"
   debug:
     description: Enables debug logging
-    default: false
+    default: "false"
   verbose:
     description: Enables verbose logging
-    default: true
+    default: "true"
 outputs:
   updated:
-    description: 'Whether or not an update was issued.'
+    description: "Whether or not an update was issued."
   version:
-    description: 'Version of the repository after the update.'
+    description: "Version of the repository after the update."
 runs:
-  using: 'docker'
-  image: 'Dockerfile'
+  using: "docker"
+  image: "Dockerfile"
   args:
-    - '--gha'
-    - '--verbose'
-    - '${{inputs.verbose}}'
-    - '--debug'
-    - '${{inputs.debug}}'
-    - 'download'
-    - '-s'
-    - '${{inputs.slug}}'
-    - '-v'
-    - '${{inputs.version}}'
-    - '-f'
-    - '${{inputs.regex}}'
-    - '-p'
-    - '${{inputs.parallelism}}'
-    - '-o'
-    - '${{inputs.output-path}}'
-    - '-c'
-    - '${{inputs.clut-path}}/${{inputs.slug}}'
+    - "--gha"
+    - "--verbose"
+    - "${{inputs.verbose}}"
+    - "--debug"
+    - "${{inputs.debug}}"
+    - "download"
+    - "-s"
+    - "${{inputs.slug}}"
+    - "-v"
+    - "${{inputs.version}}"
+    - "-f"
+    - "${{inputs.regex}}"
+    - "-p"
+    - "${{inputs.parallelism}}"
+    - "-o"
+    - "${{inputs.output-path}}"
+    - "-c"
+    - "${{inputs.clut-path}}/${{inputs.slug}}"
 branding:
   color: red
   icon: download-cloud

@@ -90,7 +90,7 @@ public sealed class PatchClient : IDisposable
         }
         else
         {
-            Log.Info($"Downloading {version}; {ranges.Ranges.Count} ranges");
+            Log.Info($"Downloading {version}; {ranges.Ranges.Sum(r => r.To - r.From + 1) / (double)(1 << 20):0.00} MiB; {ranges.Ranges.Count} ranges");
             await foreach (var data in GetRangedHttpAsync(url, version, ranges, 0, token).WithCancellation(token).ConfigureAwait(false))
                 yield return data;
         }
@@ -120,7 +120,7 @@ public sealed class PatchClient : IDisposable
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Range = ranges;
-        
+
         using var sema = await SemaphoreLock.CreateAsync(ConnectionSemaphore, token).ConfigureAwait(false);
         RangeHeaderValue? r1 = null, r2 = null;
         try
@@ -140,7 +140,7 @@ public sealed class PatchClient : IDisposable
             if (ranges.Ranges.Count == 1)
                 throw new InvalidOperationException("Failed to download range");
 
-            Log.Warn($"Retrying {version}; {ranges.Ranges.Count} ranges");
+            Log.Warn($"Retrying {version}; {ranges.Ranges.Sum(r => r.To - r.From + 1) / (double)(1 << 20):0.00} MiB; {ranges.Ranges.Count} ranges");
             var rangeList = ranges.Ranges.ToArray().AsSpan();
             var halfCount = rangeList.Length / 2;
 
