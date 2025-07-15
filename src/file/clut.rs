@@ -1,7 +1,7 @@
-use crate::binary::NetString;
-use crate::clut_file_data::ClutFileData;
-use crate::clut_header::ClutHeader;
-use crate::types::{CompressType, PatchVersion};
+use super::file_data::FileData;
+use super::header::Header;
+use super::types::{CompressType, PatchVersion};
+use super::utils::NetString;
 use binrw::BinRead;
 use brotli::Decompressor;
 use flate2::read::ZlibDecoder;
@@ -10,22 +10,22 @@ use std::io::{Cursor, Read};
 
 /// Complete CLUT file structure containing header, folders, and file data
 #[derive(Debug, Clone)]
-pub struct ClutFile {
+pub struct Clut {
     /// File header with metadata
-    pub header: ClutHeader,
+    pub header: Header,
 
     /// Set of folder paths
     pub folders: HashSet<String>,
 
     /// Map of file paths to their data
-    pub files: HashMap<String, ClutFileData>,
+    pub files: HashMap<String, FileData>,
 }
 
-impl ClutFile {
+impl Clut {
     /// Create a new empty CLUT file
     pub fn new() -> Self {
         Self {
-            header: ClutHeader::default(),
+            header: Header::default(),
             folders: HashSet::new(),
             files: HashMap::new(),
         }
@@ -34,7 +34,7 @@ impl ClutFile {
     /// Read a CLUT file from a binary reader
     pub fn read<R: Read + std::io::Seek>(mut reader: R) -> anyhow::Result<Self> {
         // Read header
-        let header = ClutHeader::read_options(&mut reader, binrw::Endian::Little, ())?;
+        let header = Header::read_options(&mut reader, binrw::Endian::Little, ())?;
 
         // Read compressed data
         let compressed_size = header.get_compressed_size();
@@ -81,7 +81,7 @@ impl ClutFile {
 
     /// Read the decompressed data portion of a CLUT file
     fn read_decompressed_data<R: Read + std::io::Seek>(
-        header: ClutHeader,
+        header: Header,
         reader: &mut R,
     ) -> anyhow::Result<Self> {
         use binrw::Endian;
@@ -113,11 +113,11 @@ impl ClutFile {
         // Read file data
         let mut files = HashMap::with_capacity(file_len as usize);
         for file_name in file_names {
-            let file_data = ClutFileData::read_with_patches(reader, &patch_versions)?;
+            let file_data = FileData::read_with_patches(reader, &patch_versions)?;
             files.insert(file_name, file_data);
         }
 
-        Ok(ClutFile {
+        Ok(Clut {
             header,
             folders,
             files,
@@ -136,7 +136,7 @@ impl ClutFile {
             .files
             .values()
             .flat_map(|file_data| &file_data.data)
-            .map(|data_ref| data_ref.applied_version_index)
+            .map(|data_ref| data_ref.applied_version_index())
             .collect();
 
         ClutStats {
@@ -148,7 +148,7 @@ impl ClutFile {
     }
 }
 
-impl Default for ClutFile {
+impl Default for Clut {
     fn default() -> Self {
         Self::new()
     }

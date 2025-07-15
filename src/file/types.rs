@@ -17,7 +17,7 @@ pub enum CompressType {
 #[br(repr = u16)]
 #[bw(repr = u16)]
 #[repr(u16)]
-pub enum ClutVersion {
+pub enum Version {
     Initial = 1,
     SeparateVersioning = 2,
 }

@@ -1,17 +1,12 @@
-mod binary;
-mod clut_data_ref;
-mod clut_file;
-mod clut_file_data;
-mod clut_header;
-mod clut_patch_ref;
-mod types;
+mod file;
+mod patcher;
 
 use clap::{Arg, Command};
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::clut_file::ClutFile;
+use crate::file::clut::Clut;
 
 fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut clut_files = Vec::new();
@@ -39,7 +34,7 @@ fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<std::path::Pat
 fn test_clut_file<P: AsRef<Path>>(file_path: P) -> anyhow::Result<()> {
     let path = file_path.as_ref();
     let data = fs::read(path)?;
-    let _clut_file = ClutFile::read(Cursor::new(data))?;
+    let _clut_file = Clut::read(Cursor::new(data))?;
     Ok(())
 }
 
