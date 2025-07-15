@@ -136,7 +136,7 @@ impl Clut {
             .files
             .values()
             .flat_map(|file_data| &file_data.data)
-            .map(|data_ref| data_ref.applied_version_index())
+            .map(|data_ref| data_ref.applied_version())
             .collect();
 
         ClutStats {

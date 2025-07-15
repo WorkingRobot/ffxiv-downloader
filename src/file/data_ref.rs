@@ -32,8 +32,8 @@ enum DataRefType {
 /// Reference to data within a file, represented as an enum matching C# ClutDataRef variants
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataRef {
-    /// Index into the patch version array
-    applied_version_index: i32,
+    /// Patch version where this data reference is from
+    applied_version: PatchVersion,
     /// File offset (read separately in phase 2)
     offset: i64,
     /// Data length (read separately in phase 3)
@@ -44,8 +44,8 @@ pub struct DataRef {
 
 impl DataRef {
     /// Get the applied version index for any variant
-    pub fn applied_version_index(&self) -> i32 {
-        return self.applied_version_index;
+    pub fn applied_version(&self) -> &PatchVersion {
+        return &self.applied_version;
     }
 
     /// Get the file offset for any variant
@@ -95,9 +95,9 @@ impl BinRead for DataRef {
         let version_index = version_index_varint.0;
 
         // Look up the actual patch version from the index
-        let applied_version_index =
+        let applied_version =
             if version_index >= 0 && (version_index as usize) < patch_versions.len() {
-                version_index
+                patch_versions[version_index as usize].clone()
             } else {
                 return Err(binrw::Error::Custom {
                     pos: 0,
@@ -106,7 +106,7 @@ impl BinRead for DataRef {
             };
 
         let mut ret = DataRef {
-            applied_version_index,
+            applied_version,
             offset: 0,                      // Will be set in phase 2
             length: 0,                      // Will be set in phase 3
             ref_type: DataRefType::Zero {}, // Default, will be overwritten
@@ -137,13 +137,13 @@ impl BinRead for DataRef {
 }
 
 impl BinWrite for DataRef {
-    type Args<'a> = (&'a mut i64,); // patch_offset tracker
+    type Args<'a> = (&'a mut i64, &'a [PatchVersion]); // patch_offset tracker
 
     fn write_options<W: std::io::Write + std::io::Seek>(
         &self,
         writer: &mut W,
         endian: binrw::Endian,
-        (patch_offset_tracker,): Self::Args<'_>,
+        (patch_offset_tracker, patch_versions): Self::Args<'_>,
     ) -> binrw::BinResult<()> {
         let type_to_write = match self.ref_type {
             DataRefType::Patch { patch_offset, .. } => {
@@ -157,7 +157,16 @@ impl BinWrite for DataRef {
             DataRefType::EmptyBlock { .. } => RefType::EmptyBlock as u8,
         };
         type_to_write.write_options(writer, endian, ())?;
-        VarInt32(self.applied_version_index).write_options(writer, endian, ())?;
+
+        let version_index = patch_versions
+            .iter()
+            .position(|v| v == &self.applied_version)
+            .ok_or_else(|| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new(format!("Patch version not found in versions list")),
+            })? as i32;
+
+        VarInt32(version_index).write_options(writer, endian, ())?;
         match &self.ref_type {
             DataRefType::Patch {
                 patch,

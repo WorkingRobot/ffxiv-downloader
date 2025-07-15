@@ -22,10 +22,10 @@ pub struct Header {
     pub repository: String,
 
     /// Game version (converted from NetString during deserialization)
-    pub version: String,
+    pub version: GameVersion,
 
     /// Patch version (converted from NetString during deserialization)
-    pub patch_version: String,
+    pub patch_version: PatchVersion,
 
     /// Base patch URL (converted from NetString during deserialization, can be empty)
     pub base_patch_url: String,
@@ -38,13 +38,6 @@ pub struct Header {
 }
 
 impl Header {
-    /// Parse the version strings into structured types
-    pub fn parse_versions(&self) -> anyhow::Result<(GameVersion, PatchVersion)> {
-        let game_version = GameVersion::new(&self.version)?;
-        let patch_version = PatchVersion::new(&self.patch_version)?;
-        Ok((game_version, patch_version))
-    }
-
     /// Get the actual compressed size (already computed during deserialization)
     pub fn get_compressed_size(&self) -> i32 {
         self.compressed_size
@@ -64,8 +57,8 @@ impl Default for Header {
             compression: CompressType::None,
             platform: PlatformId::Win32,
             repository: "UNKNOWN".to_string(),
-            version: GameVersion::epoch().to_string(),
-            patch_version: PatchVersion::epoch().to_string(),
+            version: GameVersion::epoch(),
+            patch_version: PatchVersion::epoch(),
             base_patch_url: String::new(),
             decompressed_size: 0,
             compressed_size: 0,
@@ -107,7 +100,16 @@ impl BinRead for Header {
         // Read NetStrings and convert to regular strings
         let repository = NetString::read_options(reader, endian, ())?.0;
         let version = NetString::read_options(reader, endian, ())?.0;
+        let version = GameVersion::new(&version).map_err(|e| binrw::Error::Custom {
+            pos: 0,
+            err: Box::new(e),
+        })?;
         let patch_version = NetString::read_options(reader, endian, ())?.0;
+        let patch_version =
+            PatchVersion::new(&patch_version).map_err(|e| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new(e),
+            })?;
         let base_patch_url = NetString::read_options(reader, endian, ())?.0;
 
         let decompressed_size = i32::read_options(reader, endian, ())?;
@@ -151,8 +153,8 @@ impl BinWrite for Header {
 
         // Convert strings back to NetStrings for writing
         NetString(self.repository.clone()).write_options(writer, endian, ())?;
-        NetString(self.version.clone()).write_options(writer, endian, ())?;
-        NetString(self.patch_version.clone()).write_options(writer, endian, ())?;
+        NetString(self.version.to_string()).write_options(writer, endian, ())?;
+        NetString(self.patch_version.to_string()).write_options(writer, endian, ())?;
         NetString(self.base_patch_url.clone()).write_options(writer, endian, ())?;
 
         self.decompressed_size.write_options(writer, endian, ())?;

@@ -58,11 +58,10 @@ impl FileData {
     }
 
     /// Write file data with patch version mapping
-    #[allow(dead_code)]
     pub fn write_with_patches<W: std::io::Write + std::io::Seek>(
         &self,
         writer: &mut W,
-        _patch_map: &std::collections::HashMap<PatchVersion, i32>,
+        patch_versions: &[PatchVersion],
     ) -> binrw::BinResult<()> {
         use binrw::Endian;
 
@@ -72,7 +71,11 @@ impl FileData {
 
         // Write all data references
         for data_ref in &self.data {
-            data_ref.write_options(writer, Endian::Little, (&mut patch_offset_tracker,))?;
+            data_ref.write_options(
+                writer,
+                Endian::Little,
+                (&mut patch_offset_tracker, patch_versions),
+            )?;
         }
 
         // Write offsets (delta-encoded)
