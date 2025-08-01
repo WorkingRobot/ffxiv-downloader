@@ -3,18 +3,51 @@ on: push
 
 jobs:
   build:
-    name: Build ${{matrix.name}}
+    name: Build ${{matrix.platform.os-name}} (${{matrix.type.name}})
     strategy:
       matrix:
-        include:
-        - id: windows
-          name: Windows
-          rid: win-x64
-        - id: linux
-          name: Linux
-          rid: linux-x64
+        type:
+          - id: dotnet
+            name: .NET
+            artifact-name: FFXIVDownloader.Command
+          - id: rust
+            name: Rust
+            artifact-name: xiv-dl
 
-    runs-on: ubuntu-latest
+        platform:
+          - os-name: linux-x64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            rid: linux-x64
+
+          - os-name: linux-arm64
+            runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            rid: linux-arm64
+
+          - os-name: win-x64
+            runs-on: windows-latest
+            rid: win-x64
+            target: x86_64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: win-arm64
+            runs-on: windows-latest
+            rid: win-arm64
+            target: aarch64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: osx-x64
+            runs-on: macOS-latest
+            rid: osx-x64
+            target: x86_64-apple-darwin
+
+          - os-name: osx-arm64
+            runs-on: macOS-latest
+            rid: osx-arm64
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform.runs-on }}
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: true
 
@@ -25,24 +58,47 @@ jobs:
           submodules: recursive
 
       - name: Setup .NET
+        if: matrix.type.id == 'dotnet'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0"
-      
-      - name: Restore
-        run: dotnet restore -r ${{matrix.rid}} -p:ContinuousIntegrationBuild=true
+    
+      - name: Build (.NET)
+        if: matrix.type.id == 'dotnet'
+        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
 
-      - name: Build
-        run: dotnet build -c Release -r ${{matrix.rid}} --no-restore -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
+      - name: Build (Rust)
+        if: matrix.type.id == 'rust'
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release --manifest-path xiv-dl/Cargo.toml"
+          strip: true
 
-      - name: Publish
-        run: dotnet publish -c Release -r ${{matrix.rid}} --no-build -o build -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
+      - name: Rename Binary (.NET)
+        if: matrix.type.id == 'dotnet'
+        shell: bash
+        run: |
+          mv -f build/FFXIVDownloader.Command${{ matrix.platform.binary-ext }} build/${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
       
-      - name: Upload Build
+      - name: Rename Binary (Rust)
+        if: matrix.type.id == 'rust'
+        shell: bash
+        run: |
+          mv -f target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+      
+      - name: Attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+      
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{matrix.id}}
-          path: build
+          name: ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}
+          path: |
+            ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
           if-no-files-found: error
 
   release:
@@ -79,25 +135,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download Linux Build
+      - name: Download All Builds
         if: steps.check_release.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
-          name: build-linux
-          path: linux
-    
-      - name: Download Windows Build
-        if: steps.check_release.outputs.exists == 'false'
-        uses: actions/download-artifact@v4
-        with:
-          name: build-windows
-          path: windows
+          path: artifacts
       
       - name: Create Release
         if: steps.check_release.outputs.exists == 'false'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
+          fail_on_unmatched_files: true
           files: |
-            linux/FFXIVDownloader.Command
-            windows/FFXIVDownloader.Command.exe
+            artifacts/*

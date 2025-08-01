@@ -1,13 +1,11 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
-WORKDIR /source
+FROM rust:alpine AS build
+WORKDIR /app
 
-COPY . .
-RUN dotnet restore -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
-RUN dotnet build -c Release --no-restore -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
-RUN dotnet publish -c Release --no-build -o /app -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
+COPY xiv-dl .
+RUN cargo build --release
 
-FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine
+FROM alpine AS runtime
 
 WORKDIR /app
-COPY --from=build /app .
-ENTRYPOINT ["/app/FFXIVDownloader.Command"]
+COPY --from=build /app/target/release/xiv-dl .
+ENTRYPOINT ["./xiv-dl"]

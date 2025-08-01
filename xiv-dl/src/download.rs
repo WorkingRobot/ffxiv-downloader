@@ -66,7 +66,7 @@ impl From<DownloadConfigArgs> for DownloadConfig {
         Self {
             slug: args.slug,
             clut_path: args.clut_path,
-            version: args.version,
+            version: args.version.filter(|v| !v.is_empty()),
             output_path: args
                 .output_path
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),

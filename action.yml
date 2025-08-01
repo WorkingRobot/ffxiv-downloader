@@ -20,14 +20,8 @@ inputs:
   clut-path:
     description: "Path to a directory or base url where CLUT files can be retrieved from."
     default: "https://raw.githubusercontent.com/WorkingRobot/ffxiv-lut/refs/heads/main/cluts"
-  skip-cache:
-    description: "Whether to skip making a .cachemeta.json file. Defaults to false. If true, downloads will always start from scratch."
-    default: "false"
-  debug:
-    description: Enables debug logging
-    default: "false"
-  verbose:
-    description: Enables verbose logging
+  use-cache:
+    description: "Whether to use a .cachemeta.json file. Defaults to true. If false, downloads will always start from scratch."
     default: "true"
 outputs:
   updated:
@@ -39,10 +33,6 @@ runs:
   image: "docker://ghcr.io/workingrobot/ffxiv-downloader:v5.2.0"
   args:
     - "--gha"
-    - "--verbose"
-    - "${{inputs.verbose}}"
-    - "--debug"
-    - "${{inputs.debug}}"
     - "download"
     - "-s"
     - "${{inputs.slug}}"
@@ -55,7 +45,9 @@ runs:
     - "-o"
     - "${{inputs.output-path}}"
     - "-c"
-    - "${{inputs.clut-path}}/${{inputs.slug}}"
+    - "${{inputs.clut-path}}"
+    - "-u"
+    - "${{inputs.use-cache}}"
 branding:
   color: red
   icon: download-cloud
