@@ -57,12 +57,12 @@ impl AsyncFile {
             } else {
                 let bytes_read: usize = result
                     .try_into()
-                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "invalid return value"))?;
+                    .map_err(|_| io::Error::other("invalid return value"))?;
                 Ok(bytes_read)
             }
         })
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "spawn_blocking failed"))??;
+        .map_err(|_| io::Error::other("spawn_blocking failed"))??;
 
         Ok(bytes_read)
     }
@@ -96,12 +96,12 @@ impl AsyncFile {
             } else {
                 let bytes_written: usize = result
                     .try_into()
-                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "invalid return value"))?;
+                    .map_err(|_| io::Error::other("invalid return value"))?;
                 Ok(bytes_written)
             }
         })
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "spawn_blocking failed"))?
+        .map_err(|_| io::Error::other("spawn_blocking failed"))?
     }
 
     pub async fn truncate(&self, size: usize) -> io::Result<()> {

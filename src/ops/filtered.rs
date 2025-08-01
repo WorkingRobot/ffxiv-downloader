@@ -43,24 +43,6 @@ impl<T: FileOperations> FileOperations for FilteredFileOperations<T> {
     async fn delete_directory(&self, path: &str) -> Result<()> {
         self.inner.delete_directory(path).await
     }
-
-    async fn delete_expansion(
-        &self,
-        expansion_id: u16,
-        mut should_keep: impl (FnMut(String) -> bool) + Send,
-    ) -> Result<()> {
-        let mut filtered_files = self.filtered_files.lock().await;
-
-        self.inner
-            .delete_expansion(expansion_id, |path| {
-                let filtered = (self.filter)(&path);
-                if !filtered {
-                    filtered_files.remove(&path);
-                }
-                !(filtered && !should_keep(path))
-            })
-            .await
-    }
 }
 
 impl<T: FileOperations> FilteredFileOperations<T> {

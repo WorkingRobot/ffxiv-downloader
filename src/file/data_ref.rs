@@ -48,17 +48,17 @@ pub struct DataRef {
 impl DataRef {
     /// Get the applied version index for any variant
     pub fn applied_version(&self) -> &PatchVersion {
-        return &self.applied_version;
+        &self.applied_version
     }
 
     /// Get the file offset for any variant
     pub fn offset(&self) -> u64 {
-        return self.offset;
+        self.offset
     }
 
     /// Get the data length for any variant
     pub fn len(&self) -> u32 {
-        return self.length;
+        self.length
     }
 
     /// Set the offset for any variant (used during phase 2 reading)
@@ -128,7 +128,7 @@ impl BinRead for DataRef {
             _ => {
                 return Err(binrw::Error::Custom {
                     pos: 0,
-                    err: Box::new(format!("Invalid ref type: {}", raw_type)),
+                    err: Box::new(format!("Invalid ref type: {raw_type}")),
                 });
             }
         };
@@ -143,7 +143,7 @@ impl BinRead for DataRef {
             } else {
                 return Err(binrw::Error::Custom {
                     pos: 0,
-                    err: Box::new(format!("Invalid patch version index: {}", version_index)),
+                    err: Box::new(format!("Invalid patch version index: {version_index}")),
                 });
             };
 
@@ -205,7 +205,7 @@ impl BinWrite for DataRef {
             .position(|v| v == &self.applied_version)
             .ok_or_else(|| binrw::Error::Custom {
                 pos: 0,
-                err: Box::new(format!("Patch version not found in versions list")),
+                err: Box::new("Patch version not found in versions list".to_string()),
             })? as i32;
 
         VarInt32(version_index).write_options(writer, endian, ())?;

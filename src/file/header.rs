@@ -81,8 +81,7 @@ impl BinRead for Header {
             return Err(binrw::Error::Custom {
                 pos: 0,
                 err: Box::new(format!(
-                    "Invalid magic bytes: expected 0xDF23, got {:#X}",
-                    magic
+                    "Invalid magic bytes: expected 0xDF23, got {magic:#X}"
                 )),
             });
         }
@@ -91,7 +90,7 @@ impl BinRead for Header {
         if file_version != Version::SeparateVersioning {
             return Err(binrw::Error::Custom {
                 pos: 0,
-                err: Box::new(format!("Unsupported version: {:?}", file_version)),
+                err: Box::new(format!("Unsupported version: {file_version:?}")),
             });
         }
 

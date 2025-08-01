@@ -218,7 +218,7 @@ impl BinRead for NetString {
 
         let string = String::from_utf8(bytes).map_err(|e| binrw::Error::Custom {
             pos: 0,
-            err: Box::new(format!("Invalid UTF-8: {}", e)),
+            err: Box::new(format!("Invalid UTF-8: {e}")),
         })?;
 
         Ok(NetString(string))

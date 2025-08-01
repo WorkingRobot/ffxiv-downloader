@@ -35,7 +35,7 @@ impl CacheMetadata {
                             .into_iter()
                             .filter_map(|v| GameVersion::new(&v).ok())
                             .max()
-                            .unwrap_or_else(|| GameVersion::epoch()),
+                            .unwrap_or_else(GameVersion::epoch),
                         filtered_files: old_meta.filtered_files,
                     }
                 }

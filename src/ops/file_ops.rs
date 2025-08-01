@@ -19,11 +19,6 @@ pub trait FileOperations: Send + Sync {
     async fn create_directory(&self, path: &str) -> Result<()>;
     async fn delete_file(&self, path: &str) -> Result<()>;
     async fn delete_directory(&self, path: &str) -> Result<()>;
-    async fn delete_expansion(
-        &self,
-        expansion_id: u16,
-        should_keep: impl (FnMut(String) -> bool) + Send,
-    ) -> Result<()>;
 }
 
 #[async_trait]

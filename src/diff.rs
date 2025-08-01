@@ -56,7 +56,7 @@ impl ClutDiff {
                 .filter(|d| *d.applied_version() > from.header.patch_version)
                 .cloned()
                 .collect();
-            if new_data.len() > 0 {
+            if !new_data.is_empty() {
                 added_files.insert(path.clone(), new_data);
             }
         }
@@ -99,7 +99,7 @@ impl ClutDiff {
         };
 
         self.added_files.retain(|path, _| filter(path));
-        self.removed_files.retain(|path| filter(path));
+        self.removed_files.retain(filter);
 
         filtered_out
     }

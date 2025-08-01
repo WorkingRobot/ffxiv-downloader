@@ -1,7 +1,4 @@
-use std::{
-    io::{Cursor, Write},
-    path::Path,
-};
+use std::io::{Cursor, Write};
 
 mod file_ops;
 mod filtered;
@@ -29,19 +26,4 @@ fn create_empty_file_block(block_count: i64) -> Vec<u8> {
     cursor.write_all(&0u32.to_le_bytes()).unwrap();
 
     ret
-}
-
-fn get_expansion_folder(expansion_id: u16) -> String {
-    if expansion_id == 0 {
-        "ffxiv".to_string()
-    } else {
-        format!("ex{expansion_id}")
-    }
-}
-
-const EXPAC_FOLDERS: &[&str] = &["sqpack", "movie"];
-
-fn should_keep(path: &Path) -> bool {
-    const DEL_EXPAC_FILTER: &[&str] = &[".var", "00000.bk2", "00001.bk2", "00002.bk2", "00003.bk2"];
-    DEL_EXPAC_FILTER.iter().any(|filter| path.ends_with(filter))
 }

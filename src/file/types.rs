@@ -51,10 +51,7 @@ impl binrw::BinRead for PlatformId {
             other => {
                 return Err(binrw::Error::Custom {
                     pos: 0,
-                    err: Box::new(format!(
-                        "Unknown PlatformId value: {} (0x{:02X})",
-                        other, other
-                    )),
+                    err: Box::new(format!("Unknown PlatformId value: {other} (0x{other:02X})",)),
                 });
             }
         })

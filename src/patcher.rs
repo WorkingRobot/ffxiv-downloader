@@ -58,7 +58,7 @@ impl MergedRange {
     /// Create a new merged range from a single patch reference
     pub fn new(patch_ref: PatchRef) -> Self {
         Self {
-            offset: patch_ref.offset as u64,
+            offset: patch_ref.offset,
             size: patch_ref.size as u64,
             parts: vec![patch_ref],
         }
@@ -68,12 +68,12 @@ impl MergedRange {
     /// Returns true if merged successfully, false if ranges are too far apart
     /// Implements the C# MergedRange.Add() logic
     pub fn try_add(&mut self, patch_ref: &PatchRef) -> bool {
-        if (patch_ref.offset as u64 + patch_ref.size as u64 + MIN_RANGE_DISTANCE) < self.offset {
+        if (patch_ref.offset + patch_ref.size as u64 + MIN_RANGE_DISTANCE) < self.offset {
             false
         } else {
             self.size = self
                 .size
-                .max(patch_ref.offset as u64 + patch_ref.size as u64 - self.offset);
+                .max(patch_ref.offset + patch_ref.size as u64 - self.offset);
             self.parts.push(patch_ref.clone());
             true
         }
@@ -124,7 +124,7 @@ impl fmt::Display for RangeBatch {
             if i > 0 {
                 write!(f, ",")?;
             }
-            write!(f, "{}", range)?;
+            write!(f, "{range}")?;
         }
         Ok(())
     }
@@ -169,15 +169,15 @@ impl<F: FileOperations> ClutPatcher<F> {
 
     pub async fn apply_diff(&self) -> Result<()> {
         for removed_file in &self.diff.removed_files {
-            self.ops.delete_file(&removed_file).await?;
+            self.ops.delete_file(removed_file).await?;
         }
 
         for removed_dir in &self.diff.removed_folders {
-            self.ops.delete_directory(&removed_dir).await?;
+            self.ops.delete_directory(removed_dir).await?;
         }
 
         for added_dir in &self.diff.added_folders {
-            self.ops.create_directory(&added_dir).await?;
+            self.ops.create_directory(added_dir).await?;
         }
 
         self.process_data_refs().await?;
@@ -316,12 +316,13 @@ impl<F: FileOperations> ClutPatcher<F> {
         &self,
         refs: Vec<(&PatchVersion, &PatchRef)>,
     ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> {
-        let refs_by_version =
-            refs.into_iter()
-                .fold(HashMap::new(), |mut acc, (version, patch_ref)| {
-                    acc.entry(version).or_insert_with(Vec::new).push(patch_ref);
-                    acc
-                });
+        let refs_by_version = refs.into_iter().fold(
+            HashMap::new(),
+            |mut acc: HashMap<&_, Vec<&_>>, (version, patch_ref)| {
+                acc.entry(version).or_default().push(patch_ref);
+                acc
+            },
+        );
 
         let stream_by_version = refs_by_version
             .into_iter()
@@ -443,10 +444,11 @@ impl<F: FileOperations> ClutPatcher<F> {
             })
             .map(|fut| fut.try_flatten_stream().boxed_local());
 
-        let range_streams = stream::select_all(batch_streams)
-            .map_ok(|((version, range), bytes)| {
+        let range_streams =
+            stream::select_all(batch_streams).map_ok(|((version, range), bytes)| {
                 stream::iter(range.parts.into_iter().map(move |patch_ref| {
-                    let relative_start = (patch_ref.offset as u64)
+                    let relative_start = patch_ref
+                        .offset
                         .checked_sub(range.offset)
                         .expect("PatchRef offset should always be within range");
                     let relative_end = relative_start + patch_ref.size as u64;
@@ -466,10 +468,9 @@ impl<F: FileOperations> ClutPatcher<F> {
                         future::ok(((version, patch_ref), bytes)).boxed_local()
                     }
                 })
-            })
-            .try_flatten_unordered(None);
+            });
 
-        range_streams
+        range_streams.try_flatten_unordered(None)
     }
 
     fn get_content_range_bytes(headers: &HeaderMap) -> Result<ContentRangeBytes> {

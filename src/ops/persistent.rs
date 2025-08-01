@@ -10,9 +10,7 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::ops::{
-    EXPAC_FOLDERS,
     file_ops::{FileOperations, TargetFile},
-    get_expansion_folder,
     io::{OpenOptionsExt, PositionedFile},
 };
 
@@ -62,34 +60,6 @@ impl FileOperations for PersistentFileOperations {
     async fn delete_directory(&self, path: &str) -> Result<()> {
         let full_path = self.get_full_path(path);
         std::fs::remove_dir(full_path)
-    }
-
-    async fn delete_expansion(
-        &self,
-        expansion_id: u16,
-        mut should_keep: impl (FnMut(String) -> bool) + Send,
-    ) -> Result<()> {
-        let mut files = self.open_files.lock().await;
-
-        let expansion_folder = get_expansion_folder(expansion_id);
-
-        for dir_name in EXPAC_FOLDERS {
-            let dir = self.get_full_path(format!("{dir_name}/{expansion_folder}"));
-            if dir.exists() {
-                for file in dir.read_dir()? {
-                    let file = file?;
-                    if file.file_type()?.is_file() {
-                        let path = file.path();
-                        if !(should_keep)(path.to_string_lossy().to_string()) {
-                            files.remove(&path);
-                            std::fs::remove_file(path)?;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 

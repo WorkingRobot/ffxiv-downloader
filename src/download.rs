@@ -93,7 +93,7 @@ impl DownloadCommand {
             .file_patterns
             .iter()
             .map(|pattern| {
-                Regex::new(pattern).with_context(|| format!("Invalid regex pattern: {}", pattern))
+                Regex::new(pattern).with_context(|| format!("Invalid regex pattern: {pattern}"))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -142,11 +142,11 @@ impl DownloadCommand {
         log::info!("  Slug: {}", self.config.slug);
         log::info!("  Name: {}", meta.name);
         log::info!("  Description: {}", meta.description.unwrap_or_default());
-        log::info!("  Latest Version: {}", latest_version);
+        log::info!("  Latest Version: {latest_version}");
 
         let target_version = if let Some(ref version) = self.config.version {
             GameVersion::new(version)
-                .with_context(|| format!("Invalid version specified: {}", version))?
+                .with_context(|| format!("Invalid version specified: {version}"))?
         } else {
             latest_version
         };
@@ -155,14 +155,11 @@ impl DownloadCommand {
             && cache.slug == self.config.slug
             && cache.version == target_version
         {
-            log::info!(
-                "Version {} is already downloaded. Skipping download.",
-                target_version
-            );
+            log::info!("Version {target_version} is already downloaded. Skipping download.");
             return Ok((target_version, false));
         }
 
-        log::info!("Downloading version {}", target_version);
+        log::info!("Downloading version {target_version}");
 
         let target_clut = self.download_clut(&target_version).await?;
         let source_clut = {
@@ -205,13 +202,13 @@ impl DownloadCommand {
             ClutDiff::from(target_clut)
         };
 
-        if let Some(patch) = meta.latest_version.patches.iter().next() {
+        if let Some(patch) = meta.latest_version.patches.first() {
             let mut patch_url = patch.url.parse::<Url>()?;
             patch_url
                 .path_segments_mut()
                 .map_err(|_| anyhow::anyhow!("Failed to parse patch URL: {}", patch.url))?
                 .pop();
-            diff.provide_base_patch_url(patch_url.to_string());
+            diff.provide_base_patch_url(&patch_url);
         }
         let diff_filtered_files =
             diff.filter_files(|path| Self::regex_matches(&self.regexes, path));
@@ -254,7 +251,7 @@ impl DownloadCommand {
             self.config.clut_path, self.config.slug, version
         );
         let clut_bytes = self.client.get(&clut_url).send().await?.bytes().await?;
-        Ok(Clut::read(Cursor::new(clut_bytes))
-            .with_context(|| format!("Failed to read CLUT from {}", clut_url))?)
+        Clut::read(Cursor::new(clut_bytes))
+            .with_context(|| format!("Failed to read CLUT from {clut_url}"))
     }
 }

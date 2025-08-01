@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
                 OpenOptions::new()
                     .write(true)
                     .open(Path::new(&outputs_path))?
-                    .write_all(format!("version={}\nupdated={}\n", version, updated).as_bytes())?;
+                    .write_all(format!("version={version}\nupdated={updated}\n").as_bytes())?;
             }
             Ok(())
         }
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn test_clut_files(directory: &str) -> anyhow::Result<()> {
-    println!("Searching for CLUT files in: {}", directory);
+    println!("Searching for CLUT files in: {directory}");
 
     let clut_files = find_clut_files(directory)?;
     println!("Found {} CLUT files", clut_files.len());
@@ -132,7 +132,7 @@ async fn test_clut_files(directory: &str) -> anyhow::Result<()> {
                 successful += 1;
             }
             Err(e) => {
-                println!("✗ FAILED: {}", e);
+                println!("✗ FAILED: {e}");
                 failed += 1;
             }
         }
@@ -140,11 +140,11 @@ async fn test_clut_files(directory: &str) -> anyhow::Result<()> {
 
     println!("\n=== Test Summary ===");
     println!("Total files: {}", clut_files.len());
-    println!("Successful: {}", successful);
-    println!("Failed: {}", failed);
+    println!("Successful: {successful}");
+    println!("Failed: {failed}");
     println!(
         "Success rate: {:.1}%",
-        if clut_files.len() > 0 {
+        if !clut_files.is_empty() {
             (successful as f64 / clut_files.len() as f64) * 100.0
         } else {
             0.0
