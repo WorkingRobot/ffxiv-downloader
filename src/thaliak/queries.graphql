@@ -1,0 +1,28 @@
+query GetPatchChain($repoId: String!) {
+    repository(slug: $repoId) {
+        versions {
+            versionString
+            isActive
+            prerequisiteVersions {
+                versionString
+            }
+            patches {
+                url
+                size
+            }
+        }
+    }
+}
+
+query GetRepositoryMetadata($repoId: String!) {
+    repository(slug: $repoId) {
+        name
+        description
+        latestVersion {
+            versionString
+            patches {
+                url
+            }
+        }
+    }
+}

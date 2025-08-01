@@ -1,5 +1,6 @@
-use super::types::{CompressType, GameVersion, PatchVersion, PlatformId, Version};
+use super::types::{CompressType, PlatformId, Version};
 use super::utils::NetString;
+use super::version::{GameVersion, PatchVersion};
 use binrw::{BinRead, BinWrite};
 
 /// CLUT file header containing metadata and compression information

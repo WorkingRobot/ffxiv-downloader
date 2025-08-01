@@ -1,6 +1,8 @@
+use crate::file::version::PatchVersion;
+
 use super::file_data::FileData;
 use super::header::Header;
-use super::types::{CompressType, PatchVersion};
+use super::types::CompressType;
 use super::utils::NetString;
 use binrw::BinRead;
 use brotli::Decompressor;

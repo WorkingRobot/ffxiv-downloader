@@ -115,6 +115,84 @@ impl BinWrite for VarInt64 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VarUInt32(pub u32);
+
+impl BinRead for VarUInt32 {
+    type Args<'a> = ();
+
+    fn read_options<R: Read + std::io::Seek>(
+        reader: &mut R,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<Self> {
+        let value = VarInt32::read_options(reader, endian, args)?
+            .0
+            .try_into()
+            .map_err(|_| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new("VarUInt32 overflow".to_string()),
+            })?;
+        Ok(VarUInt32(value))
+    }
+}
+
+impl BinWrite for VarUInt32 {
+    type Args<'a> = ();
+
+    fn write_options<W: Write + std::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<()> {
+        VarInt32(self.0.try_into().map_err(|_| binrw::Error::Custom {
+            pos: writer.stream_position().unwrap_or(0),
+            err: Box::new("VarUInt32 overflow".to_string()),
+        })?)
+        .write_options(writer, endian, args)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VarUInt64(pub u64);
+
+impl BinRead for VarUInt64 {
+    type Args<'a> = ();
+
+    fn read_options<R: Read + std::io::Seek>(
+        reader: &mut R,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<Self> {
+        let value = VarInt64::read_options(reader, endian, args)?
+            .0
+            .try_into()
+            .map_err(|_| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new("VarUInt64 overflow".to_string()),
+            })?;
+        Ok(VarUInt64(value))
+    }
+}
+
+impl BinWrite for VarUInt64 {
+    type Args<'a> = ();
+
+    fn write_options<W: Write + std::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: Endian,
+        args: Self::Args<'_>,
+    ) -> BinResult<()> {
+        VarInt64(self.0.try_into().map_err(|_| binrw::Error::Custom {
+            pos: writer.stream_position().unwrap_or(0),
+            err: Box::new("VarUInt64 overflow".to_string()),
+        })?)
+        .write_options(writer, endian, args)
+    }
+}
+
 /// Custom parser for .NET BinaryReader strings (length-prefixed with 7-bit encoded length)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetString(pub String);

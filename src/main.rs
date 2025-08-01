@@ -1,12 +1,52 @@
+mod cache;
+mod diff;
+mod download;
 mod file;
+mod ops;
 mod patcher;
+mod thaliak;
 
-use clap::{Arg, Command};
-use std::fs;
+use clap::{Parser, Subcommand};
+use shadow_rs::shadow;
 use std::io::Cursor;
 use std::path::Path;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+};
 
+use crate::download::{DownloadCommand, DownloadConfigArgs};
 use crate::file::clut::Clut;
+
+shadow!(build);
+
+#[derive(Parser)]
+#[command(name = build::PROJECT_NAME)]
+#[command(version = build::CLAP_LONG_VERSION)]
+#[command(about = build::PKG_DESCRIPTION)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Is this a CI run?
+    #[arg(long, hide = true, default_value_t = false)]
+    gha: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Test CLUT file parsing
+    TestClut {
+        /// Directory to recursively search for CLUT files
+        #[arg(short = 'd', long, value_name = "DIR", default_value = ".")]
+        directory: String,
+    },
+    /// Download FFXIV files using CLUT patches
+    Download {
+        #[command(flatten)]
+        config_args: DownloadConfigArgs,
+    },
+}
 
 fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut clut_files = Vec::new();
@@ -40,20 +80,36 @@ fn test_clut_file<P: AsRef<Path>>(file_path: P) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let matches = Command::new("xiv-dl")
-        .version("0.1.0")
-        .about("FFXIV CLUT file reader and tester")
-        .arg(
-            Arg::new("directory")
-                .short('d')
-                .long("directory")
-                .value_name("DIR")
-                .help("Directory to recursively search for CLUT files")
-                .default_value("/home/asriel/Downloads/cluts/"),
-        )
-        .get_matches();
+    env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "info"
+        },
+    ))
+    .init();
 
-    let directory = matches.get_one::<String>("directory").unwrap();
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::TestClut { directory } => test_clut_files(&directory).await,
+        Commands::Download { config_args } => {
+            let mut download_cmd = DownloadCommand::new(config_args.into())?;
+            let (version, updated) = download_cmd.run().await?;
+            if cli.gha
+                && let Some(outputs_path) = std::env::var_os("GITHUB_OUTPUT")
+            {
+                OpenOptions::new()
+                    .write(true)
+                    .open(Path::new(&outputs_path))?
+                    .write_all(format!("version={}\nupdated={}\n", version, updated).as_bytes())?;
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn test_clut_files(directory: &str) -> anyhow::Result<()> {
     println!("Searching for CLUT files in: {}", directory);
 
     let clut_files = find_clut_files(directory)?;

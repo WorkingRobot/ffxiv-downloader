@@ -1,5 +1,8 @@
+use crate::file::utils::VarUInt32;
+
 use super::patch_ref::PatchRef;
-use super::types::PatchVersion;
+use super::version::PatchVersion;
+
 use super::utils::VarInt32;
 use binrw::{BinRead, BinWrite};
 
@@ -21,7 +24,7 @@ enum DataRefType {
         /// Reference to patch data
         patch: PatchRef,
         /// Patch offset (only for non-FullPatch type)
-        patch_offset: Option<i32>,
+        patch_offset: Option<u32>,
     },
     /// Zero-filled blocks
     Zero {},
@@ -35,9 +38,9 @@ pub struct DataRef {
     /// Patch version where this data reference is from
     applied_version: PatchVersion,
     /// File offset (read separately in phase 2)
-    offset: i64,
+    offset: u64,
     /// Data length (read separately in phase 3)
-    length: i32,
+    length: u32,
     /// Typed Data
     ref_type: DataRefType,
 }
@@ -49,28 +52,67 @@ impl DataRef {
     }
 
     /// Get the file offset for any variant
-    pub fn offset(&self) -> i64 {
+    pub fn offset(&self) -> u64 {
         return self.offset;
     }
 
     /// Get the data length for any variant
-    pub fn length(&self) -> i32 {
+    pub fn len(&self) -> u32 {
         return self.length;
     }
 
     /// Set the offset for any variant (used during phase 2 reading)
-    pub fn set_offset(&mut self, new_offset: i64) {
+    pub fn set_offset(&mut self, new_offset: u64) {
         self.offset = new_offset;
     }
 
     /// Set the length for any variant (used during phase 3 reading)
-    pub fn set_length(&mut self, new_length: i32) {
+    pub fn set_len(&mut self, new_length: u32) {
         self.length = new_length;
+    }
+
+    /// Check if this DataRef is a patch
+    pub fn is_patch(&self) -> bool {
+        matches!(self.ref_type, DataRefType::Patch { .. })
+    }
+
+    // Check if this DataRef is a Zero reference
+    pub fn is_zero(&self) -> bool {
+        matches!(self.ref_type, DataRefType::Zero {})
+    }
+
+    /// Check if this DataRef is an EmptyBlock reference
+    pub fn is_empty_block(&self) -> bool {
+        matches!(self.ref_type, DataRefType::EmptyBlock { .. })
+    }
+
+    /// Get the patch reference if this is a patch DataRef
+    pub fn patch(&self) -> Option<&PatchRef> {
+        match &self.ref_type {
+            DataRefType::Patch { patch, .. } => Some(patch),
+            _ => None,
+        }
+    }
+
+    /// Get the patch offset if this is a non-FullPatch DataRef
+    pub fn patch_offset(&self) -> Option<u32> {
+        match &self.ref_type {
+            DataRefType::Patch { patch_offset, .. } => Some(patch_offset.unwrap_or_default()),
+            _ => None,
+        }
+    }
+
+    /// Get the block count for EmptyBlock DataRef
+    pub fn block_count(&self) -> Option<i32> {
+        match &self.ref_type {
+            DataRefType::EmptyBlock { block_count } => Some(*block_count),
+            _ => None,
+        }
     }
 }
 
 impl BinRead for DataRef {
-    type Args<'a> = (&'a mut i64, &'a [PatchVersion]); // patch_offset tracker, patch versions
+    type Args<'a> = (&'a mut u64, &'a [PatchVersion]); // patch_offset tracker, patch versions
 
     fn read_options<R: std::io::Read + std::io::Seek>(
         reader: &mut R,
@@ -116,7 +158,7 @@ impl BinRead for DataRef {
             RefType::Patch => {
                 let patch = PatchRef::read_options(reader, endian, (patch_offset_tracker,))?;
                 let patch_offset = if raw_type == 0 {
-                    Some(VarInt32::read_options(reader, endian, ())?.0)
+                    Some(VarUInt32::read_options(reader, endian, ())?.0)
                 } else {
                     None
                 };
@@ -137,7 +179,7 @@ impl BinRead for DataRef {
 }
 
 impl BinWrite for DataRef {
-    type Args<'a> = (&'a mut i64, &'a [PatchVersion]); // patch_offset tracker
+    type Args<'a> = (&'a mut u64, &'a [PatchVersion]); // patch_offset tracker
 
     fn write_options<W: std::io::Write + std::io::Seek>(
         &self,
@@ -174,7 +216,7 @@ impl BinWrite for DataRef {
             } => {
                 patch.write_options(writer, endian, (patch_offset_tracker,))?;
                 if type_to_write == 0 {
-                    VarInt32(patch_offset.unwrap_or(0)).write_options(writer, endian, ())?;
+                    VarUInt32(patch_offset.unwrap_or(0)).write_options(writer, endian, ())?;
                 }
             }
             DataRefType::Zero {} => {}
