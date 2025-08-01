@@ -1,6 +1,8 @@
 FROM rust:alpine AS build
 WORKDIR /app
 
+RUN apk add --no-cache musl-dev openssl-dev
+
 COPY xiv-dl .
 RUN cargo build --release
 

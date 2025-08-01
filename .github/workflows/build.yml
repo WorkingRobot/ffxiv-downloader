@@ -4,6 +4,11 @@ on: push
 jobs:
   build:
     name: Build ${{matrix.platform.os-name}} (${{matrix.type.name}})
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
     strategy:
       matrix:
         type:
