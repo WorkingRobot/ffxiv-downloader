@@ -1,4 +1,0 @@
-[submodule "ffxiv-downloader"]
-	path = ffxiv-downloader
-	url = https://github.com/WorkingRobot/ffxiv-downloader.git
-	branch = main
