@@ -109,9 +109,16 @@ impl PartialOrd for Version {
     }
 }
 
+/// Alternate ("ver:#") representation provides a PatchVersion (with explicit D prefix)
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let prefix = if self.is_historic { "H" } else { "" };
+        let prefix = if self.is_historic {
+            "H"
+        } else if f.alternate() {
+            "D"
+        } else {
+            ""
+        };
         let section = self.section.as_deref().unwrap_or("");
         write!(
             f,
@@ -178,6 +185,6 @@ impl PatchVersion {
 
 impl Display for PatchVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{:#}", self.0)
     }
 }
