@@ -25,10 +25,13 @@ jobs:
             target: x86_64-unknown-linux-gnu
             rid: linux-x64
 
-          - os-name: linux-arm64
-            runs-on: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            rid: linux-arm64
+          # https://github.com/houseabsolute/actions-rust-cross/tree/v1/?tab=readme-ov-file#cross-compiling-from-linux-arm-runners
+          # If you need linux-arm64, let me know.
+
+          # - os-name: linux-arm64
+          #   runs-on: ubuntu-latest
+          #   target: aarch64-unknown-linux-gnu
+          #   rid: linux-arm64
 
           - os-name: win-x64
             runs-on: windows-latest
