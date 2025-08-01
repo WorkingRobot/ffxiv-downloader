@@ -8,12 +8,12 @@ mod thaliak;
 
 use clap::{Parser, Subcommand};
 use shadow_rs::shadow;
-use std::io::Cursor;
-use std::path::Path;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
+    path::Path,
 };
+use std::{io::Cursor, path::PathBuf};
 
 use crate::download::{DownloadCommand, DownloadConfigArgs};
 use crate::file::clut::Clut;
@@ -48,10 +48,8 @@ enum Commands {
     },
 }
 
-fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<std::path::PathBuf>> {
-    let mut clut_files = Vec::new();
-
-    fn visit_dir(dir: &Path, clut_files: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
+fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<PathBuf>> {
+    fn visit_dir(dir: &Path, clut_files: &mut Vec<PathBuf>) -> std::io::Result<()> {
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
@@ -66,6 +64,7 @@ fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<std::path::Pat
         Ok(())
     }
 
+    let mut clut_files = Vec::new();
     visit_dir(dir.as_ref(), &mut clut_files)?;
     clut_files.sort();
     Ok(clut_files)
@@ -92,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::TestClut { directory } => test_clut_files(&directory).await,
+        Commands::TestClut { directory } => test_clut_files(&directory),
         Commands::Download { config_args } => {
             let mut download_cmd = DownloadCommand::new(config_args.into())?;
             let (version, updated) = download_cmd.run().await?;
@@ -109,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn test_clut_files(directory: &str) -> anyhow::Result<()> {
+fn test_clut_files(directory: &str) -> anyhow::Result<()> {
     println!("Searching for CLUT files in: {directory}");
 
     let clut_files = find_clut_files(directory)?;

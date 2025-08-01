@@ -4,13 +4,13 @@ use super::utils::VarInt64;
 use binrw::{BinRead, BinWrite};
 
 /// Reference to patch data within a patch file
-/// Fields match exactly what the C# ClutPatchRef auto-properties expose
+/// Fields match exactly what the C# `ClutPatchRef` auto-properties expose
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PatchRef {
     /// Absolute offset in the patch file (computed from delta during deserialization)
     pub offset: u64,
 
-    /// Size of the patch data (extracted from VarInt32 during deserialization)
+    /// Size of the patch data (extracted from `VarInt32` during deserialization)
     pub size: u32,
 
     /// Whether the patch data is compressed (converted from u8 during deserialization)

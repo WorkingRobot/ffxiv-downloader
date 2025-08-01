@@ -34,19 +34,19 @@ use tokio_util::io::StreamReader;
 const MAX_RANGE_HEADER_SIZE: usize = 1 << 12;
 const MIN_RANGE_DISTANCE: u64 = 1 << 9;
 
-/// Reference to a DataRef by its indices
+/// Reference to a `DataRef` by its indices
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DataReference {
     pub file_name_index: usize,
     pub data_ref_index: usize,
 }
 
-/// Reference to a PatchRef by its indices
+/// Reference to a `PatchRef` by its indices
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PatchReference(DataReference);
 
 /// Represents merged/consolidated HTTP ranges for efficient downloading
-/// Matches the C# MergedRange class functionality
+/// Matches the C# `MergedRange` class functionality
 #[derive(Debug, Clone)]
 pub struct MergedRange {
     pub offset: u64,
@@ -66,7 +66,7 @@ impl MergedRange {
 
     /// Try to add another patch reference to this range
     /// Returns true if merged successfully, false if ranges are too far apart
-    /// Implements the C# MergedRange.Add() logic
+    /// Implements the C# `MergedRange.Add()` logic
     pub fn try_add(&mut self, patch_ref: &PatchRef) -> bool {
         if (patch_ref.offset + patch_ref.size as u64 + MIN_RANGE_DISTANCE) < self.offset {
             false
@@ -234,9 +234,7 @@ impl<F: FileOperations> ClutPatcher<F> {
             .get_patch_data(patch_refs.keys().copied().collect())
             .map(|r| r.map(Either::Right));
         let full_stream =
-            stream::select_with_strategy(plain_stream, download_stream, |_: &mut ()| {
-                PollNext::Right
-            });
+            stream::select_with_strategy(plain_stream, download_stream, |()| PollNext::Right);
 
         let plain_refs_seen = AtomicUsize::new(0);
         let patch_refs_seen = AtomicUsize::new(0);
@@ -265,7 +263,8 @@ impl<F: FileOperations> ClutPatcher<F> {
                             self.process_op_patch(patch_ref, &bytes).await?;
                         }
                     }
-                };
+                }
+
                 Ok(())
             })
             .await?;
@@ -397,9 +396,8 @@ impl<F: FileOperations> ClutPatcher<F> {
                             );
                             let multipart = Multipart::with_reader(reader, boundary);
                             let stream = try_unfold(multipart, |mut multipart| async move {
-                                let field = match multipart.next_field().await? {
-                                    Some(field) => field,
-                                    None => return Ok(None),
+                                let Some(field) = multipart.next_field().await? else {
+                                    return Ok(None);
                                 };
                                 let content_range = Self::get_content_range_bytes(field.headers())?;
                                 let bytes = field.bytes().await?;

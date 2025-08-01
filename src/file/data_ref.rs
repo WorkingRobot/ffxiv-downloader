@@ -23,7 +23,7 @@ enum DataRefType {
     Patch {
         /// Reference to patch data
         patch: PatchRef,
-        /// Patch offset (only for non-FullPatch type)
+        /// Patch offset (only for non-`FullPatch` type)
         patch_offset: Option<u32>,
     },
     /// Zero-filled blocks
@@ -32,7 +32,7 @@ enum DataRefType {
     EmptyBlock { block_count: i32 },
 }
 
-/// Reference to data within a file, represented as an enum matching C# ClutDataRef variants
+/// Reference to data within a file, represented as an enum matching C# `ClutDataRef` variants
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataRef {
     /// Patch version where this data reference is from
@@ -71,22 +71,22 @@ impl DataRef {
         self.length = new_length;
     }
 
-    /// Check if this DataRef is a patch
+    /// Check if this `DataRef` is a patch
     pub fn is_patch(&self) -> bool {
         matches!(self.ref_type, DataRefType::Patch { .. })
     }
 
-    // Check if this DataRef is a Zero reference
+    // Check if this `DataRef` is a `Zero` reference
     pub fn is_zero(&self) -> bool {
         matches!(self.ref_type, DataRefType::Zero {})
     }
 
-    /// Check if this DataRef is an EmptyBlock reference
+    /// Check if this `DataRef` is an `EmptyBlock` reference
     pub fn is_empty_block(&self) -> bool {
         matches!(self.ref_type, DataRefType::EmptyBlock { .. })
     }
 
-    /// Get the patch reference if this is a patch DataRef
+    /// Get the patch reference if this is a patch `DataRef`
     pub fn patch(&self) -> Option<&PatchRef> {
         match &self.ref_type {
             DataRefType::Patch { patch, .. } => Some(patch),
@@ -94,7 +94,7 @@ impl DataRef {
         }
     }
 
-    /// Get the patch offset if this is a non-FullPatch DataRef
+    /// Get the patch offset if this is a non-`FullPatch` `DataRef`
     pub fn patch_offset(&self) -> Option<u32> {
         match &self.ref_type {
             DataRefType::Patch { patch_offset, .. } => Some(patch_offset.unwrap_or_default()),
@@ -102,7 +102,7 @@ impl DataRef {
         }
     }
 
-    /// Get the block count for EmptyBlock DataRef
+    /// Get the block count for `EmptyBlock` `DataRef`
     pub fn block_count(&self) -> Option<i32> {
         match &self.ref_type {
             DataRefType::EmptyBlock { block_count } => Some(*block_count),

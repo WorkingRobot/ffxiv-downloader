@@ -193,7 +193,7 @@ impl BinWrite for VarUInt64 {
     }
 }
 
-/// Custom parser for .NET BinaryReader strings (length-prefixed with 7-bit encoded length)
+/// Custom parser for .NET `BinaryReader` strings (length-prefixed with 7-bit encoded length)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetString(pub String);
 

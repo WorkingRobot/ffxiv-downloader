@@ -24,20 +24,19 @@ impl CacheMetadata {
         let path = path.as_ref().join(".cachemeta.json");
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
-            let meta: Self = match serde_json::from_str(&data) {
-                Ok(meta) => meta,
-                Err(_) => {
-                    let old_meta: CacheMetadataOld = serde_json::from_str(&data)?;
-                    Self {
-                        slug: String::new(),
-                        version: old_meta
-                            .installed_versions
-                            .into_iter()
-                            .filter_map(|v| GameVersion::new(&v).ok())
-                            .max()
-                            .unwrap_or_else(GameVersion::epoch),
-                        filtered_files: old_meta.filtered_files,
-                    }
+            let meta = if let Ok(meta) = serde_json::from_str(&data) {
+                meta
+            } else {
+                let old_meta: CacheMetadataOld = serde_json::from_str(&data)?;
+                Self {
+                    slug: String::new(),
+                    version: old_meta
+                        .installed_versions
+                        .into_iter()
+                        .filter_map(|v| GameVersion::new(&v).ok())
+                        .max()
+                        .unwrap_or_else(GameVersion::epoch),
+                    filtered_files: old_meta.filtered_files,
                 }
             };
             Ok(meta)

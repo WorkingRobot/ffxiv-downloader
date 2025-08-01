@@ -35,8 +35,8 @@ impl PositionedFile {
     }
 
     #[inline]
-    pub async fn truncate(&self, size: usize) -> io::Result<()> {
-        self.0.truncate(size).await
+    pub fn truncate(&self, size: usize) -> io::Result<()> {
+        self.0.truncate(size)
     }
 
     pub async fn pwrite_all(&self, offset: usize, data: &[u8]) -> io::Result<()> {

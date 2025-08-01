@@ -104,7 +104,7 @@ impl AsyncFile {
         .map_err(|_| io::Error::other("spawn_blocking failed"))?
     }
 
-    pub async fn truncate(&self, size: usize) -> io::Result<()> {
+    pub fn truncate(&self, size: usize) -> io::Result<()> {
         let fd = self.file.as_raw_fd();
         let size: i64 = size
             .try_into()

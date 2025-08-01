@@ -4,7 +4,7 @@ use super::version::{GameVersion, PatchVersion};
 use binrw::{BinRead, BinWrite};
 
 /// CLUT file header containing metadata and compression information
-/// Fields match exactly what the C# ClutHeader auto-properties expose
+/// Fields match exactly what the C# `ClutHeader` auto-properties expose
 #[derive(Debug, Clone)]
 pub struct Header {
     /// Magic bytes (0xDF23)
@@ -19,16 +19,16 @@ pub struct Header {
     /// Target platform
     pub platform: PlatformId,
 
-    /// Repository name (converted from NetString during deserialization)
+    /// Repository name (converted from `NetString` during deserialization)
     pub repository: String,
 
-    /// Game version (converted from NetString during deserialization)
+    /// Game version (converted from `NetString` during deserialization)
     pub version: GameVersion,
 
-    /// Patch version (converted from NetString during deserialization)
+    /// Patch version (converted from `NetString` during deserialization)
     pub patch_version: PatchVersion,
 
-    /// Base patch URL (converted from NetString during deserialization, can be empty)
+    /// Base patch URL (converted from `NetString` during deserialization, can be empty)
     pub base_patch_url: String,
 
     /// Size of decompressed data

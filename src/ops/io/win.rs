@@ -70,7 +70,7 @@ impl AsyncFile {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
-    pub async fn truncate(&self, size: usize) -> io::Result<()> {
+    pub fn truncate(&self, size: usize) -> io::Result<()> {
         let size: i64 = size
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Size must fit in a i64"))?;

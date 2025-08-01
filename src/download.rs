@@ -127,11 +127,11 @@ impl DownloadCommand {
     pub async fn run(&mut self) -> Result<(GameVersion, bool)> {
         std::fs::create_dir_all(&self.config.output_path).with_context(|| {
             format!(
-                "Failed to create output directory: {:?}",
-                self.config.output_path
+                "Failed to create output directory: {}",
+                self.config.output_path.display()
             )
         })?;
-        log::info!("Output Path: {:?}", self.config.output_path);
+        log::info!("Output Path: {}", self.config.output_path.display());
         if !self.config.file_patterns.is_empty() {
             log::info!("File Filter: {:?}", self.config.file_patterns);
         }
