@@ -84,7 +84,7 @@ jobs:
         if: matrix.type.id == 'dotnet'
         shell: bash
         run: |
-          mv -f build/FFXIVDownloader.Command${{ matrix.platform.binary-ext }} build/${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+          mv -f build/FFXIVDownloader.Command${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
       
       - name: Rename Binary (Rust)
         if: matrix.type.id == 'rust'
