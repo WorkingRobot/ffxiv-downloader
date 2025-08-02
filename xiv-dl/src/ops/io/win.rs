@@ -16,11 +16,15 @@ use windows::{
     core::Owned,
 };
 
-use crate::win_future::FileFuture;
+use crate::ops::io::win_future::FileFuture;
 
 pub struct AsyncFile {
     handle: Owned<HANDLE>,
 }
+
+// SAFETY: HANDLEs are designed to be used across threads, and the operations we're doing on them are thread-safe.
+unsafe impl Send for AsyncFile {}
+unsafe impl Sync for AsyncFile {}
 
 impl AsyncFile {
     pub fn open(opts: &OpenOptions, path: impl AsRef<Path>) -> io::Result<Self> {

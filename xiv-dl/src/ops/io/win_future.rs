@@ -18,6 +18,9 @@ struct OverlappedWrap {
     data: Either<Option<Waker>, Result<u32>>,
 }
 
+// SAFETY: Rust says OVERLAPPED is not Send, but only because it contains a HANDLE.
+unsafe impl Send for OverlappedWrap {}
+
 impl OverlappedWrap {
     unsafe extern "system" fn waker_callback(
         dwerrorcode: u32,
