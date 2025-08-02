@@ -44,7 +44,7 @@ pub struct DownloadConfigArgs {
     pub queue_depth: Option<usize>,
     /// Keep a .cachemeta.json file to track already downloaded versions
     /// instead of always starting from scratch
-    #[arg(short, long, value_name = "BOOL", default_value_t = false)]
+    #[arg(short, long, value_name = "BOOL", default_value_t = false, default_missing_value = "true", num_args = 0..=1)]
     pub use_cache: bool,
 }
 
