@@ -36,7 +36,7 @@ impl FileOperations for PersistentFileOperations {
                 }
 
                 // If the file is not already open, we create a new PersistentFile
-                let file = PersistentFile::new(self.get_full_path(path))?;
+                let file = PersistentFile::new(path)?;
                 Ok(entry.insert(file).clone())
             }
         }
