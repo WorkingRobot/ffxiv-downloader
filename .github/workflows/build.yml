@@ -94,7 +94,7 @@ jobs:
         if: matrix.type.id == 'rust'
         shell: bash
         run: |
-          mv -f target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+          mv -f xiv-dl/target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
       
       - name: Attest
         uses: actions/attest-build-provenance@v2
