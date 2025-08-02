@@ -80,7 +80,8 @@ jobs:
         uses: houseabsolute/actions-rust-cross@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: "--locked --release --manifest-path xiv-dl/Cargo.toml"
+          working-directory: xiv-dl
+          args: "--locked --release"
           strip: true
 
       - name: Rename Binary (.NET)
