@@ -9,5 +9,5 @@ RUN cargo build --release
 FROM alpine AS runtime
 WORKDIR /app
 
-COPY --from=build /app/target/release/xiv-dl .
+COPY --from=build /app/target/release/xiv-dl xiv-dl
 ENTRYPOINT ["./xiv-dl"]
