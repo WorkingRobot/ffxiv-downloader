@@ -2,10 +2,11 @@ use crate::file::utils::VarUInt32;
 
 use super::utils::VarInt64;
 use binrw::{BinRead, BinWrite};
+use serde::{Deserialize, Serialize};
 
 /// Reference to patch data within a patch file
 /// Fields match exactly what the C# `ClutPatchRef` auto-properties expose
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PatchRef {
     /// Absolute offset in the patch file (computed from delta during deserialization)
     pub offset: u64,
@@ -65,5 +66,3 @@ impl BinWrite for PatchRef {
         Ok(())
     }
 }
-
-impl PatchRef {}

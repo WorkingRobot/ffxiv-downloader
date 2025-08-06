@@ -26,3 +26,20 @@ query GetRepositoryMetadata($repoId: String!) {
         }
     }
 }
+
+query GetAllRepositories {
+  repositories {
+    slug
+    name
+    latestVersion {
+      versionString
+      patches {
+        url
+      }
+    }
+    versions {
+      versionString
+      isActive
+    }
+  }
+}

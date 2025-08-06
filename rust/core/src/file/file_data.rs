@@ -6,18 +6,13 @@ use super::version::PatchVersion;
 use binrw::{BinRead, BinWrite};
 
 /// File data within a CLUT, containing references to data blocks
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct FileData {
     /// List of data references for this file
     pub data: Vec<DataRef>,
 }
 
 impl FileData {
-    /// Create a new empty file data
-    pub fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
     /// Read file data with patch version mapping
     pub fn read_with_patches<R: std::io::Read + std::io::Seek>(
         reader: &mut R,
@@ -100,11 +95,5 @@ impl FileData {
         }
 
         Ok(())
-    }
-}
-
-impl Default for FileData {
-    fn default() -> Self {
-        Self::new()
     }
 }

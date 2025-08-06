@@ -1,7 +1,6 @@
 use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
-
-use crate::file::{clut::Clut, data_ref::DataRef, header::Header, version::GameVersion};
+use xiv_core::file::{clut::Clut, data_ref::DataRef, header::Header, version::GameVersion};
 
 pub struct ClutDiff {
     pub repository: String,

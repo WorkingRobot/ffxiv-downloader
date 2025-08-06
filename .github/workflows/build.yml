@@ -73,7 +73,7 @@ jobs:
     
       - name: Build (.NET)
         if: matrix.type.id == 'dotnet'
-        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
+        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true dotnet/FFXIVDownloader.Command
 
       - name: Build (Rust)
         if: matrix.type.id == 'rust'

@@ -2,8 +2,7 @@ use std::{collections::HashSet, path::Path};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-
-use crate::file::version::GameVersion;
+use xiv_core::file::version::GameVersion;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheMetadata {

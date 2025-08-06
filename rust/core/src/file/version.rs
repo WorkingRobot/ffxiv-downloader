@@ -109,7 +109,7 @@ impl PartialOrd for Version {
     }
 }
 
-/// Alternate ("ver:#") representation provides a PatchVersion (with explicit D prefix)
+/// Alternate ("ver:#") representation provides a `PatchVersion` (with explicit D prefix)
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let prefix = if self.is_historic {

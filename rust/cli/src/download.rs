@@ -1,10 +1,9 @@
 use crate::{
+    build,
     cache::CacheMetadata,
     diff::ClutDiff,
-    file::{clut::Clut, version::GameVersion},
     ops::{FilteredFileOperations, PersistentFileOperations},
     patcher::ClutPatcher,
-    thaliak::get_repository_metadata,
 };
 use anyhow::{Context, Result};
 use clap::Args;
@@ -13,6 +12,10 @@ use reqwest::Client;
 use std::io::Cursor;
 use std::{path::PathBuf, sync::Arc};
 use url::Url;
+use xiv_core::{
+    file::{clut::Clut, version::GameVersion},
+    thaliak::get_repository_metadata,
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct DownloadConfigArgs {
@@ -99,7 +102,7 @@ impl DownloadCommand {
 
         Ok(Self {
             client: Client::builder()
-                .user_agent("xiv-dl/0.1.0")
+                .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
                 .build()
                 .context("Failed to create HTTP client")?,
             regexes: Arc::new(regexes),

@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 
 /// Complete CLUT file structure containing header, folders, and file data
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Clut {
     /// File header with metadata
     pub header: Header,
@@ -24,15 +24,6 @@ pub struct Clut {
 }
 
 impl Clut {
-    /// Create a new empty CLUT file
-    pub fn new() -> Self {
-        Self {
-            header: Header::default(),
-            folders: HashSet::new(),
-            files: HashMap::new(),
-        }
-    }
-
     /// Read a CLUT file from a binary reader
     pub fn read<R: Read + std::io::Seek>(mut reader: R) -> anyhow::Result<Self> {
         // Read header
@@ -147,12 +138,6 @@ impl Clut {
             total_data_refs,
             unique_patch_count: unique_patches.len(),
         }
-    }
-}
-
-impl Default for Clut {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

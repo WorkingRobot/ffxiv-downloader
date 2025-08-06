@@ -1,10 +1,8 @@
 mod cache;
 mod diff;
 mod download;
-mod file;
 mod ops;
 mod patcher;
-mod thaliak;
 
 use clap::{Parser, Subcommand};
 use shadow_rs::shadow;
@@ -14,9 +12,9 @@ use std::{
     path::Path,
 };
 use std::{io::Cursor, path::PathBuf};
+use xiv_core::file::clut::Clut;
 
 use crate::download::{DownloadCommand, DownloadConfigArgs};
-use crate::file::clut::Clut;
 
 shadow!(build);
 
