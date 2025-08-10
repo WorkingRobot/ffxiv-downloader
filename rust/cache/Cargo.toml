@@ -1,0 +1,31 @@
+[package]
+name = "xiv-dl-cache"
+description.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "xiv_cache"
+
+[dependencies]
+xiv-dl-core = { path = "../core" }
+shadow-rs = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+log = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+url = { workspace = true }
+either = { workspace = true }
+foyer = { version = "0.18", features = ["serde"] }
+mini-moka = "0.10"
+tokio-util = "0.7"
+itertools = "0.14"
+
+[build-dependencies]
+shadow-rs = { workspace = true, default-features = true }

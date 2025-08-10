@@ -73,15 +73,15 @@ jobs:
     
       - name: Build (.NET)
         if: matrix.type.id == 'dotnet'
-        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true FFXIVDownloader.Command
+        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true dotnet/FFXIVDownloader.Command
 
       - name: Build (Rust)
         if: matrix.type.id == 'rust'
         uses: houseabsolute/actions-rust-cross@v1
         with:
           target: ${{ matrix.platform.target }}
-          working-directory: xiv-dl
-          args: "--locked --release"
+          working-directory: rust
+          args: "--locked --release --bin xiv-dl"
           strip: true
 
       - name: Rename Binary (.NET)
@@ -94,7 +94,7 @@ jobs:
         if: matrix.type.id == 'rust'
         shell: bash
         run: |
-          mv -f xiv-dl/target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+          mv -f rust/target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
       
       - name: Attest
         uses: actions/attest-build-provenance@v2

@@ -1,0 +1,46 @@
+[package]
+name = "xiv-dl-cli"
+description.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xiv-dl"
+path = "src/main.rs"
+
+[dependencies]
+xiv-dl-core = { path = "../core" }
+shadow-rs = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+log = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+url = { workspace = true }
+either = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1"
+env_logger = "0.11"
+regex = "1.0"
+num_cpus = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+shadow-rs = { workspace = true, default-features = true }
