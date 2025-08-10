@@ -30,11 +30,13 @@ impl PositionedFile {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub async fn pread(&self, offset: usize, buf: &mut [u8]) -> io::Result<usize> {
         self.0.pread(offset, buf).await
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn truncate(&self, size: usize) -> io::Result<()> {
         self.0.truncate(size)
     }
@@ -52,6 +54,7 @@ impl PositionedFile {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn pread_all(&self, offset: usize, buf: &mut [u8]) -> io::Result<()> {
         let mut read = 0;
         while read < buf.len() {

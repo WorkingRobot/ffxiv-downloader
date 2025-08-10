@@ -1,4 +1,4 @@
-use crate::file::version::PatchVersion;
+use crate::file::{data_ref::DataRef, version::PatchVersion};
 
 use super::file_data::FileData;
 use super::header::Header;
@@ -7,8 +7,11 @@ use super::utils::NetString;
 use binrw::BinRead;
 use brotli::Decompressor;
 use flate2::read::ZlibDecoder;
-use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Complete CLUT file structure containing header, folders, and file data
 #[derive(Debug, Default, Clone)]
@@ -20,7 +23,7 @@ pub struct Clut {
     pub folders: HashSet<String>,
 
     /// Map of file paths to their data
-    pub files: HashMap<String, FileData>,
+    pub files: HashMap<String, Arc<Vec<DataRef>>>,
 }
 
 impl Clut {
@@ -107,7 +110,7 @@ impl Clut {
         let mut files = HashMap::with_capacity(file_len as usize);
         for file_name in file_names {
             let file_data = FileData::read_with_patches(reader, &patch_versions)?;
-            files.insert(file_name, file_data);
+            files.insert(file_name, Arc::new(file_data));
         }
 
         Ok(Clut {
@@ -119,16 +122,12 @@ impl Clut {
 
     /// Get statistics about the CLUT file
     pub fn stats(&self) -> ClutStats {
-        let total_data_refs = self
-            .files
-            .values()
-            .map(|file_data| file_data.data.len())
-            .sum();
+        let total_data_refs = self.files.values().map(|file_data| file_data.len()).sum();
 
         let unique_patches: HashSet<_> = self
             .files
             .values()
-            .flat_map(|file_data| &file_data.data)
+            .flat_map(|file_data| file_data.as_slice())
             .map(|data_ref| data_ref.applied_version())
             .collect();
 

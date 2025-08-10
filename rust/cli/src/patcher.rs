@@ -127,10 +127,7 @@ impl<F: FileOperations> ClutPatcher<F> {
         let plain_stream = stream::iter(plain_refs.into_iter().map(|r| Ok(Either::Left(r))));
         let download_stream = self
             .downloader
-            .get_patch_data(
-                &self.diff.base_patch_url,
-                patch_refs.keys().copied().collect(),
-            )
+            .get_patch_data(&self.diff.base_patch_url, patch_refs.keys().copied())
             .map(|r| r.map(Either::Right));
         let full_stream =
             stream::select_with_strategy(plain_stream, download_stream, |()| PollNext::Right);
@@ -189,7 +186,7 @@ impl<F: FileOperations> ClutPatcher<F> {
         if data_ref.is_zero() {
             file.wipe(data_ref.offset(), data_ref.len()).await?;
         } else if data_ref.is_empty_block() {
-            file.write_empty_file_block(data_ref.block_count().unwrap(), data_ref.offset())
+            file.write_empty_file_block(data_ref.offset(), data_ref.block_count().unwrap())
                 .await?;
         } else {
             unreachable!()

@@ -1,11 +1,16 @@
 use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
-use xiv_core::file::{clut::Clut, data_ref::DataRef, header::Header, version::GameVersion};
+use xiv_core::file::{
+    clut::Clut, data_ref::DataRef, header::Header, slug::Slug, version::GameVersion,
+};
 
 pub struct ClutDiff {
-    pub repository: String,
+    #[allow(dead_code)]
+    pub repository: Slug,
     pub base_patch_url: String,
+    #[allow(dead_code)]
     pub version_from: GameVersion,
+    #[allow(dead_code)]
     pub version_to: GameVersion,
 
     pub removed_folders: HashSet<String>,
@@ -46,11 +51,10 @@ impl ClutDiff {
         for (path, data_refs) in &to.files {
             // If a brand new file is added, add it whole.
             if !from.files.contains_key(path) {
-                added_files.insert(path.clone(), data_refs.data.clone());
+                added_files.insert(path.clone(), data_refs.as_ref().clone());
             }
 
             let new_data: Vec<DataRef> = data_refs
-                .data
                 .iter()
                 .filter(|d| *d.applied_version() > from.header.patch_version)
                 .cloned()
@@ -61,7 +65,7 @@ impl ClutDiff {
         }
 
         Ok(Self {
-            repository: from.header.repository.clone(),
+            repository: from.header.repository,
             base_patch_url: if to.header.has_base_patch_url() {
                 &to.header.base_patch_url
             } else {
@@ -108,7 +112,7 @@ impl From<Clut> for ClutDiff {
     fn from(value: Clut) -> Self {
         let from = Clut {
             header: Header {
-                repository: value.header.repository.clone(),
+                repository: value.header.repository,
                 version: GameVersion::epoch(),
                 ..Default::default()
             },

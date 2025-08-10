@@ -119,6 +119,7 @@ impl fmt::Display for RangeBatch {
     }
 }
 
+#[derive(Debug)]
 pub struct Downloader {
     client: Client,
     semaphore: Semaphore,
@@ -136,10 +137,10 @@ impl Downloader {
         })
     }
 
-    pub fn get_patch_data(
+    pub fn get_patch_data<'a>(
         &self,
         base_patch_url: &str,
-        refs: Vec<(&PatchVersion, &PatchRef)>,
+        refs: impl Iterator<Item = (&'a PatchVersion, &'a PatchRef)>,
     ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> {
         let refs_by_version = refs.into_iter().fold(
             HashMap::new(),
@@ -192,7 +193,7 @@ impl Downloader {
             .into_iter()
             .map(|batch| {
                 let version = version.clone();
-                let url = format!("{}/{}.patch", base_patch_url, version);
+                let url = format!("{base_patch_url}/{version}.patch");
                 async move {
                     let _permit = self.semaphore.acquire().await?;
                     log::info!(

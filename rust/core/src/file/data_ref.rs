@@ -57,6 +57,7 @@ impl DataRef {
     }
 
     /// Get the data length for any variant
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> u32 {
         self.length
     }

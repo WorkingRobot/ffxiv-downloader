@@ -1,3 +1,7 @@
+use std::str::FromStr;
+
+use crate::file::slug::Slug;
+
 use super::types::{CompressType, PlatformId, Version};
 use super::utils::NetString;
 use super::version::{GameVersion, PatchVersion};
@@ -20,7 +24,7 @@ pub struct Header {
     pub platform: PlatformId,
 
     /// Repository name (converted from `NetString` during deserialization)
-    pub repository: String,
+    pub repository: Slug,
 
     /// Game version (converted from `NetString` during deserialization)
     pub version: GameVersion,
@@ -57,7 +61,7 @@ impl Default for Header {
             file_version: Version::SeparateVersioning,
             compression: CompressType::None,
             platform: PlatformId::Win32,
-            repository: "UNKNOWN".to_string(),
+            repository: Slug::default(),
             version: GameVersion::epoch(),
             patch_version: PatchVersion::epoch(),
             base_patch_url: String::new(),
@@ -99,6 +103,10 @@ impl BinRead for Header {
 
         // Read NetStrings and convert to regular strings
         let repository = NetString::read_options(reader, endian, ())?.0;
+        let repository = Slug::from_str(&repository).map_err(|e| binrw::Error::Custom {
+            pos: 0,
+            err: Box::new(e),
+        })?;
         let version = NetString::read_options(reader, endian, ())?.0;
         let version = GameVersion::new(&version).map_err(|e| binrw::Error::Custom {
             pos: 0,
@@ -152,7 +160,7 @@ impl BinWrite for Header {
         self.platform.write_options(writer, endian, ())?;
 
         // Convert strings back to NetStrings for writing
-        NetString(self.repository.clone()).write_options(writer, endian, ())?;
+        NetString(self.repository.to_string()).write_options(writer, endian, ())?;
         NetString(self.version.to_string()).write_options(writer, endian, ())?;
         NetString(self.patch_version.to_string()).write_options(writer, endian, ())?;
         NetString(self.base_patch_url.clone()).write_options(writer, endian, ())?;

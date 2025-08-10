@@ -21,7 +21,11 @@ log = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 url = { workspace = true }
+either = { workspace = true }
 foyer = { version = "0.18", features = ["serde"] }
+mini-moka = "0.10"
+tokio-util = "0.7"
+itertools = "0.14"
 
 [build-dependencies]
 shadow-rs = { workspace = true, default-features = true }
