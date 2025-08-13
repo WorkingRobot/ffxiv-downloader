@@ -182,8 +182,6 @@ impl Server {
     }
 
     async fn update_slugs(&self) -> Result<()> {
-        log::debug!("Updating slugs");
-
         let repos = get_all_repositories(&self.0.http_client).await?;
 
         let mut slugs = Vec::new();
@@ -230,8 +228,6 @@ impl Server {
         self.0
             .cache
             .insert(CacheKey::SlugList, CacheValue::SlugList(slugs));
-
-        log::debug!("Updated slugs successfully");
 
         Ok(())
     }
@@ -444,12 +440,18 @@ impl Server {
                 async move {
                     let clut_url = format!("{}/{}/{}.clut", this.0.clut_path, slug, version);
                     async {
+                        log::debug!(
+                            "Fetching CLUT file for slug: {}, version: {}",
+                            slug,
+                            version
+                        );
                         let clut_bytes = this
                             .0
                             .http_client
                             .get(&clut_url)
                             .send()
                             .await?
+                            .error_for_status()?
                             .bytes()
                             .await?;
                         Ok(CacheValue::ClutFile(clut_bytes.to_vec()))
