@@ -1,33 +1,32 @@
 use std::{
-    io::{self, SeekFrom},
+    cmp::min,
+    io::{self, Error, ErrorKind, SeekFrom},
     pin::Pin,
     task::{Context, Poll},
 };
 
-use tokio::io::{AsyncRead, AsyncSeek, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::file::CacheFile;
 
 pub struct CacheFileStream {
     file: CacheFile,
-    position: u64,
+    pos: u64,
+    // In-flight read future so we can implement `poll_read` without borrowing the user's buffer across await.
+    in_flight: Option<Pin<Box<dyn Future<Output = io::Result<Vec<u8>>> + Send>>>,
 }
 
 impl CacheFileStream {
     pub fn new(file: CacheFile) -> Self {
-        Self { file, position: 0 }
-    }
-
-    pub fn buffered(file: CacheFile) -> BufReader<Self> {
-        BufReader::new(Self::new(file))
-    }
-
-    pub fn buffered_with_capacity(file: CacheFile, capacity: usize) -> BufReader<Self> {
-        BufReader::with_capacity(capacity, Self::new(file))
+        Self {
+            file,
+            pos: 0,
+            in_flight: None,
+        }
     }
 
     pub fn position(&self) -> u64 {
-        self.position
+        self.pos
     }
 
     pub fn len(&self) -> u64 {
@@ -45,132 +44,78 @@ impl AsyncRead for CacheFileStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if buf.remaining() == 0 {
+        // If we know the total length, clamp the request so we don't read past EOF.
+        let want = buf.remaining();
+        if want == 0 {
             return Poll::Ready(Ok(()));
         }
 
-        // Check if we've reached the end of the file
-        if self.position >= self.file.len() {
+        if self.pos >= self.len() {
+            // At EOF.
             return Poll::Ready(Ok(()));
         }
 
-        let to_read = buf
-            .remaining()
-            .min((self.file.len() - self.position) as usize);
+        // Determine how much to try this time.
+        let to_read = {
+            let remaining_in_file = (self.len() - self.pos) as usize;
+            min(want, remaining_in_file)
+        };
+
         if to_read == 0 {
             return Poll::Ready(Ok(()));
         }
 
-        // Create buffer for pread
-        let mut read_buffer = vec![0u8; to_read];
-        let position = self.position;
-        let file = self.file.clone();
+        // Ensure we have an in-flight future (can't hold `buf` across await).
+        if self.in_flight.is_none() {
+            let offset = self.pos;
+            let to_read = to_read;
+            let src = self.file.clone();
 
-        let mut read_future = Box::pin(async move {
-            file.pread(position, &mut read_buffer)
-                .await
-                .map_err(io::Error::other)?;
-            Ok(read_buffer)
-        });
+            // Build the future that performs the actual `pread`.
+            let fut = async move {
+                let mut tmp = vec![0u8; to_read];
+                src.pread(offset, &mut tmp).await?;
+                Ok::<Vec<u8>, io::Error>(tmp)
+            };
 
-        match read_future.as_mut().poll(cx) {
-            Poll::Ready(Ok(data)) => {
-                let bytes_to_copy = data.len().min(buf.remaining());
-                buf.put_slice(&data[..bytes_to_copy]);
-                self.position += bytes_to_copy as u64;
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            self.in_flight = Some(Box::pin(fut));
+        }
+
+        // Poll the in-flight read.
+        match self.in_flight.as_mut().unwrap().as_mut().poll(cx) {
             Poll::Pending => Poll::Pending,
+            Poll::Ready(res) => {
+                self.in_flight = None; // clear for next call
+                match res {
+                    Ok(tmp) => {
+                        let n = tmp.len();
+                        // Safety: data is initialized by `pread`.
+                        buf.put_slice(&tmp);
+                        self.pos = self.pos.saturating_add(n as u64);
+                        Poll::Ready(Ok(()))
+                    }
+                    Err(e) => Poll::Ready(Err(e)),
+                }
+            }
         }
     }
 }
 
 impl AsyncSeek for CacheFileStream {
-    fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
-        let new_pos = match position {
-            SeekFrom::Start(pos) => pos,
-            SeekFrom::End(offset) => {
-                let file_len = self.file.len();
-                if offset >= 0 {
-                    file_len + offset as u64
-                } else {
-                    file_len.saturating_sub((-offset) as u64)
-                }
-            }
-            SeekFrom::Current(offset) => {
-                if offset >= 0 {
-                    self.position + offset as u64
-                } else {
-                    self.position.saturating_sub((-offset) as u64)
-                }
-            }
+    fn start_seek(mut self: Pin<&mut Self>, pos: SeekFrom) -> io::Result<()> {
+        let new_pos: i128 = match pos {
+            SeekFrom::Start(n) => n as i128,
+            SeekFrom::Current(delta) => self.pos as i128 + delta as i128,
+            SeekFrom::End(delta) => self.len() as i128 + delta as i128,
         };
-
-        self.position = new_pos;
+        if new_pos < 0 {
+            return Err(Error::new(ErrorKind::InvalidInput, "seek before start"));
+        }
+        self.pos = new_pos as u64;
         Ok(())
     }
 
     fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        Poll::Ready(Ok(self.position))
-    }
-}
-
-pub fn blocking_reader(file: CacheFile) -> BlockingCacheFileReader {
-    BlockingCacheFileReader::new(CacheFileStream::new(file))
-}
-
-pub struct BlockingCacheFileReader {
-    stream: CacheFileStream,
-}
-
-impl BlockingCacheFileReader {
-    fn new(stream: CacheFileStream) -> Self {
-        Self { stream }
-    }
-
-    pub fn position(&self) -> u64 {
-        self.stream.position()
-    }
-
-    pub fn len(&self) -> u64 {
-        self.stream.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.stream.is_empty()
-    }
-}
-
-impl io::Read for BlockingCacheFileReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
-
-            handle.block_on(async {
-                let mut read_buf = ReadBuf::new(buf);
-                let initial_filled = read_buf.filled().len();
-
-                futures::future::poll_fn(|cx| {
-                    Pin::new(&mut self.stream).poll_read(cx, &mut read_buf)
-                })
-                .await?;
-
-                Ok(read_buf.filled().len() - initial_filled)
-            })
-        })
-    }
-}
-
-impl io::Seek for BlockingCacheFileReader {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
-
-            handle.block_on(async {
-                Pin::new(&mut self.stream).start_seek(pos)?;
-                futures::future::poll_fn(|cx| Pin::new(&mut self.stream).poll_complete(cx)).await
-            })
-        })
+        Poll::Ready(Ok(self.pos))
     }
 }
