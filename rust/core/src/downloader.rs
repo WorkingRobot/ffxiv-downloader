@@ -141,7 +141,7 @@ impl Downloader {
         &self,
         base_patch_url: &str,
         refs: impl Iterator<Item = (&'a PatchVersion, &'a PatchRef)>,
-    ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> {
+    ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> + Send {
         let refs_by_version = refs.into_iter().fold(
             HashMap::new(),
             |mut acc: HashMap<&_, Vec<&_>>, (version, patch_ref)| {
@@ -164,7 +164,7 @@ impl Downloader {
         base_patch_url: &str,
         version: &PatchVersion,
         mut patches: Vec<&PatchRef>,
-    ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> {
+    ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> + Send {
         log::info!("Partially downloading {version}");
 
         patches.sort_by_key(|patch| patch.offset);
@@ -229,14 +229,14 @@ impl Downloader {
                                 let bytes = field.bytes().await?;
                                 Ok(Some(((content_range, bytes), multipart)))
                             });
-                            stream.boxed_local()
+                            stream.boxed()
                         }
                         Err(multer::Error::NoMultipart) => stream::once(async move {
                             let content_range = Self::get_content_range_bytes(response.headers())?;
                             let bytes = response.bytes().await?;
                             Ok((content_range, bytes))
                         })
-                        .boxed_local(),
+                        .boxed(),
                         Err(e) => {
                             bail!(e)
                         }
@@ -266,7 +266,7 @@ impl Downloader {
                     Ok(batch_stream)
                 }
             })
-            .map(|fut| fut.try_flatten_stream().boxed_local());
+            .map(|fut| fut.try_flatten_stream().boxed());
 
         let range_streams =
             stream::select_all(batch_streams).map_ok(|((version, range), bytes)| {
@@ -287,9 +287,9 @@ impl Downloader {
                             let decompressed = Self::decompress_patch_data(&bytes)?;
                             Ok(((version, patch_ref), Bytes::from(decompressed)))
                         }
-                        .boxed_local()
+                        .boxed()
                     } else {
-                        future::ok(((version, patch_ref), bytes)).boxed_local()
+                        future::ok(((version, patch_ref), bytes)).boxed()
                     }
                 })
             });
