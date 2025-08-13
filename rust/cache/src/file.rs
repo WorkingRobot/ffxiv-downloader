@@ -7,12 +7,13 @@ use futures::{
     StreamExt, TryStreamExt,
     stream::{self, PollNext},
 };
+use tokio::io::BufReader;
 use xiv_core::{
     create_empty_file_block,
     file::{data_ref::DataRef, slug::Slug, version::GameVersion},
 };
 
-use crate::server::Server;
+use crate::{server::Server, stream::CacheFileStream};
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct OffsetBuffer<'a> {
@@ -122,6 +123,16 @@ impl CacheFile {
         Self::new(server.clone(), clut.header.repository, file_data)
     }
 
+    pub async fn exists(
+        server: &Server,
+        slug: Slug,
+        version: GameVersion,
+        file_path: String,
+    ) -> Result<bool> {
+        let clut = server.get_clut(slug, version).await?;
+        Ok(clut.files.contains_key(&file_path))
+    }
+
     pub fn len(&self) -> u64 {
         self.file_data
             .last()
@@ -130,6 +141,14 @@ impl CacheFile {
 
     pub fn is_empty(&self) -> bool {
         self.file_data.is_empty() || self.len() == 0
+    }
+
+    pub fn into_reader(self) -> CacheFileStream {
+        CacheFileStream::new(self)
+    }
+
+    pub fn into_reader_buffered(self, capacity: usize) -> BufReader<CacheFileStream> {
+        BufReader::with_capacity(capacity, self.into_reader())
     }
 
     fn find_data_ref_idx(&self, offset: u64) -> Option<usize> {

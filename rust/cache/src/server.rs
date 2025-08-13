@@ -1,12 +1,11 @@
 use std::{
     collections::HashMap,
     io::Cursor,
-    path::PathBuf,
     str::FromStr,
     sync::{Arc, OnceLock},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
     Compression, DirectFsDeviceOptions, Engine, HybridCache, HybridCacheBuilder, RuntimeOptions,
@@ -40,7 +39,7 @@ use xiv_core::{
     thaliak::get_all_repositories,
 };
 
-use crate::build;
+use crate::{build, builder::ServerBuilder};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlugData {
@@ -52,6 +51,7 @@ pub struct SlugData {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum CacheKey {
+    SlugList,
     Slug(Slug),
     ClutFile(Slug, GameVersion),
     PatchData(Slug, PatchVersion, PatchRef),
@@ -59,6 +59,7 @@ enum CacheKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum CacheValue {
+    SlugList(Vec<Slug>),
     Slug(SlugData),
     ClutFile(Vec<u8>),
     PatchData(Vec<u8>),
@@ -86,103 +87,8 @@ struct ServerImpl {
     slug_updater_token: CancellationToken,
 }
 
-pub struct ServerBuilder {
-    clut_path: String,
-    clut_ram_capacity: u64,
-    clut_tti_secs: u64,
-    slug_update_interval_secs: u64,
-    ram_entry_capacity: usize,
-    clut_data_multiplier: usize,
-    patch_ref_multiplier: usize,
-    storage_directory: Option<PathBuf>,
-    storage_capacity_bytes: usize,
-    max_concurrent_downloads: usize,
-}
-
-impl ServerBuilder {
-    pub fn new() -> Self {
-        Self {
-            clut_path:
-                "https://raw.githubusercontent.com/WorkingRobot/ffxiv-lut/refs/heads/main/cluts"
-                    .to_string(),
-            clut_ram_capacity: 8,          // 8 CLUTs in RAM
-            clut_tti_secs: 5 * 60,         // 5 minutes
-            slug_update_interval_secs: 60, // 1 minute
-            ram_entry_capacity: 16384,     // 16k "entries" in RAM
-            clut_data_multiplier: 1024,    // 1024x multiplier for CLUT data in RAM cache
-            patch_ref_multiplier: 8,       // 8x multiplier for patch references in RAM cache
-            storage_directory: None,
-            storage_capacity_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
-            max_concurrent_downloads: 16,
-        }
-    }
-
-    pub fn clut_path(mut self, path: impl Into<String>) -> Self {
-        self.clut_path = path.into();
-        self
-    }
-
-    /// Maximum number of parsed CLUTs to keep in RAM
-    pub fn clut_ram_capacity(mut self, capacity: u64) -> Self {
-        self.clut_ram_capacity = capacity;
-        self
-    }
-
-    /// Time to idle for CLUTs in RAM before eviction
-    pub fn clut_tti_secs(mut self, secs: u64) -> Self {
-        self.clut_tti_secs = secs;
-        self
-    }
-
-    /// Interval in seconds to update repositories from Thaliak
-    pub fn slug_update_interval_secs(mut self, secs: u64) -> Self {
-        self.slug_update_interval_secs = secs;
-        self
-    }
-
-    /// Maximum number of entries in RAM cache
-    pub fn ram_entry_capacity(mut self, capacity: usize) -> Self {
-        self.ram_entry_capacity = capacity;
-        self
-    }
-
-    /// Multiplier for CLUT data in RAM cache
-    pub fn clut_data_multiplier(mut self, multiplier: usize) -> Self {
-        self.clut_data_multiplier = multiplier;
-        self
-    }
-
-    /// Multiplier for patch references in RAM cache
-    pub fn patch_ref_multiplier(mut self, multiplier: usize) -> Self {
-        self.patch_ref_multiplier = multiplier;
-        self
-    }
-
-    /// Directory to store cache files
-    pub fn storage_directory(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.storage_directory = Some(dir.into());
-        self
-    }
-
-    /// Maximum size of the storage in bytes
-    pub fn storage_capacity_bytes(mut self, bytes: usize) -> Self {
-        self.storage_capacity_bytes = bytes;
-        self
-    }
-
-    /// Maximum number of concurrent connections to download patches
-    pub fn max_concurrent_downloads(mut self, count: usize) -> Self {
-        self.max_concurrent_downloads = count;
-        self
-    }
-
-    pub async fn build(self) -> Result<Server> {
-        Server::new(self).await
-    }
-}
-
 impl Server {
-    async fn new(builder: ServerBuilder) -> Result<Self> {
+    pub(super) async fn new(builder: ServerBuilder) -> Result<Self> {
         let ServerBuilder {
             clut_path,
             clut_ram_capacity,
@@ -196,25 +102,26 @@ impl Server {
             max_concurrent_downloads,
         } = builder;
 
-        let cache = HybridCacheBuilder::new()
+        let mut cache = HybridCacheBuilder::new()
             .with_name("xiv-dl-cache")
+            .with_flush_on_close(true)
             .memory(ram_entry_capacity)
             .with_weighter(move |k, _| match k {
+                CacheKey::SlugList => 1,
                 CacheKey::Slug(..) => 1,
                 CacheKey::ClutFile(..) => clut_data_multiplier,
                 CacheKey::PatchData(..) => patch_ref_multiplier,
             })
             .storage(Engine::large())
             .with_compression(Compression::Zstd)
-            .with_device_options(
-                DirectFsDeviceOptions::new(
-                    storage_directory.ok_or_else(|| anyhow!("No storage backend provided"))?,
-                )
-                .with_capacity(storage_capacity_bytes),
+            .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()));
+
+        if let Some(storage_directory) = storage_directory {
+            cache = cache.with_device_options(
+                DirectFsDeviceOptions::new(storage_directory).with_capacity(storage_capacity_bytes),
             )
-            .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()))
-            .build()
-            .await?;
+        }
+        let cache = cache.build().await?;
 
         let http_client = Client::builder()
             .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
@@ -249,11 +156,11 @@ impl Server {
                 ));
                 interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 tokio::spawn(async move {
+                    log::info!("Starting slug updater thread");
                     loop {
                         select! {
                             biased;
                             _ = cancellation_token.cancelled() => {
-                                log::debug!("Slug updater thread cancelled");
                                 return;
                             }
                             _ = interval.tick() => {
@@ -275,8 +182,11 @@ impl Server {
     }
 
     async fn update_slugs(&self) -> Result<()> {
+        log::debug!("Updating slugs");
+
         let repos = get_all_repositories(&self.0.http_client).await?;
 
+        let mut slugs = Vec::new();
         for repo in repos {
             let slug = Slug::from_str(&repo.slug)?;
             let latest_patch =
@@ -311,39 +221,74 @@ impl Server {
                 latest_version,
             };
 
+            slugs.push(slug);
             self.0
                 .cache
                 .insert(CacheKey::Slug(slug), CacheValue::Slug(slug_data));
         }
+
+        self.0
+            .cache
+            .insert(CacheKey::SlugList, CacheValue::SlugList(slugs));
+
+        log::debug!("Updated slugs successfully");
+
         Ok(())
+    }
+
+    pub async fn get_slug_list(&self) -> Result<Vec<Slug>> {
+        if let Some(CacheValue::SlugList(slugs)) =
+            self.0.cache.obtain(CacheKey::SlugList).await?.as_deref()
+        {
+            Ok(slugs.clone())
+        } else {
+            bail!("Slug list not found in cache")
+        }
+    }
+
+    pub async fn get_slug(&self, slug: Slug) -> Result<SlugData> {
+        if let Some(CacheValue::Slug(slug_data)) =
+            self.0.cache.obtain(CacheKey::Slug(slug)).await?.as_deref()
+        {
+            Ok(slug_data.clone())
+        } else {
+            bail!("Slug {slug} not found in cache");
+        }
     }
 
     pub async fn get_patch_data<'a>(
         &self,
         slug: Slug,
         refs: impl Iterator<Item = (&'a PatchVersion, &'a PatchRef)>,
-    ) -> Result<impl Stream<Item = Result<((&'a PatchVersion, &'a PatchRef), Bytes)>>> {
+    ) -> Result<impl Stream<Item = Result<((&'a PatchVersion, &'a PatchRef), Bytes)>> + Send> {
         let pending_downloads = Mutex::new(HashMap::new());
 
         let cache_futures: Vec<_> = refs
             .map(|(patch_ver, patch_ref)| async move {
-                Ok::<_, anyhow::Error>((
-                    (patch_ver, patch_ref),
-                    self.0
-                        .cache
-                        .obtain(CacheKey::PatchData(
-                            slug,
-                            (*patch_ver).clone(),
-                            (*patch_ref).clone(),
-                        ))
-                        .await?,
-                ))
+                Ok::<_, anyhow::Error>(((patch_ver, patch_ref), {
+                    if self.0.cache.contains(&CacheKey::PatchData(
+                        slug,
+                        (*patch_ver).clone(),
+                        (*patch_ref).clone(),
+                    )) {
+                        self.0
+                            .cache
+                            .obtain(CacheKey::PatchData(
+                                slug,
+                                (*patch_ver).clone(),
+                                (*patch_ref).clone(),
+                            ))
+                            .await?
+                    } else {
+                        None
+                    }
+                }))
             })
             .collect::<FuturesUnordered<_>>()
             .and_then(async |((patch_ver, patch_ref), cache_entry)| {
                 match cache_entry.as_deref().cloned() {
                     Some(CacheValue::PatchData(data)) => {
-                        Ok(ready(Ok(((patch_ver, patch_ref), Bytes::from(data)))).boxed_local())
+                        Ok(ready(Ok(((patch_ver, patch_ref), Bytes::from(data)))).boxed())
                     }
                     Some(_) => Err(anyhow::anyhow!("Invalid cache value for patch data")),
                     None => {
@@ -375,7 +320,7 @@ impl Server {
                                 .map(|bytes| ((patch_ver, patch_ref), bytes))
                                 .map_err(|err_str| anyhow::anyhow!(err_str))
                         }
-                        .boxed_local())
+                        .boxed())
                     }
                 }
             })
@@ -534,6 +479,12 @@ impl Server {
                 cache_result.value()
             );
         }
+    }
+
+    pub async fn close(&self) -> Result<()> {
+        self.0.slug_updater_token.cancel();
+        self.0.cache.close().await?;
+        Ok(())
     }
 }
 
