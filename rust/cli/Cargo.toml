@@ -1,11 +1,10 @@
 [package]
 name = "xiv-dl-cli"
-description.workspace = true
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+description = "FFXIV Downloader via CLUT files"
+authors = ["Asriel Camora <asriel@camora.dev>"]
+license = "GPL-3.0"
+repository = "https://github.com/WorkingRobot/ffxiv-downloader"
+edition = "2024"
 
 [[bin]]
 name = "xiv-dl"
@@ -13,16 +12,16 @@ path = "src/main.rs"
 
 [dependencies]
 xiv-dl-core = { path = "../core" }
-shadow-rs = { workspace = true }
-tokio = { workspace = true }
-reqwest = { workspace = true }
-anyhow = { workspace = true }
-serde = { workspace = true }
-log = { workspace = true }
-bytes = { workspace = true }
-futures = { workspace = true }
-url = { workspace = true }
-either = { workspace = true }
+shadow-rs = { version = "1.2", default-features = false }
+tokio = { version = "1.47", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+bytes = "1.0"
+futures = "0.3"
+url = "2.5"
+either = "1.15"
 clap = { version = "4.5", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"
@@ -43,4 +42,4 @@ windows = { version = "0.61", features = [
 libc = "0.2"
 
 [build-dependencies]
-shadow-rs = { workspace = true, default-features = true }
+shadow-rs = "1.2"
