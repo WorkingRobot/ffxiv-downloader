@@ -8,8 +8,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
-    Compression, DirectFsDeviceOptions, Engine, HybridCache, HybridCacheBuilder, RuntimeOptions,
-    TokioRuntimeOptions,
+    BlockEngineBuilder, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
+    HybridCacheBuilder, IoEngineBuilder, RuntimeOptions, TokioRuntimeOptions, UringIoEngineBuilder,
 };
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
@@ -126,14 +126,17 @@ impl Server {
                 CacheKey::ClutFile(..) => clut_data_multiplier,
                 CacheKey::PatchData(..) => patch_ref_multiplier,
             })
-            .storage(Engine::large())
+            .storage()
+            .with_io_engine(UringIoEngineBuilder::default().build().await?)
             .with_compression(Compression::Zstd)
             .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()));
 
         if let Some(storage_directory) = storage_directory {
-            cache = cache.with_device_options(
-                DirectFsDeviceOptions::new(storage_directory).with_capacity(storage_capacity_bytes),
-            )
+            cache = cache.with_engine_config(BlockEngineBuilder::new(
+                FsDeviceBuilder::new(storage_directory)
+                    .with_capacity(storage_capacity_bytes)
+                    .build()?,
+            ))
         }
         let cache = cache.build().await?;
 
