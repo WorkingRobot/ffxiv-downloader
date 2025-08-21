@@ -62,11 +62,11 @@ enum CacheValue {
     PatchData(Vec<u8>),
 }
 
-struct TxEnforcer<T> {
+struct SafeSender<T> {
     tx: Option<Sender<T>>,
 }
 
-impl<T> TxEnforcer<T> {
+impl<T> SafeSender<T> {
     pub fn new(tx: Sender<T>) -> Self {
         Self { tx: Some(tx) }
     }
@@ -75,21 +75,17 @@ impl<T> TxEnforcer<T> {
         if let Some(tx) = self.tx.take() {
             tx.send(value)
         } else {
-            log::error!("Message queue is sending twice");
             Err(value)
         }
     }
 }
 
-impl<T> Drop for TxEnforcer<T> {
+impl<T> Drop for SafeSender<T> {
     fn drop(&mut self) {
-        if self.tx.is_some() {
-            log::error!(
-                "Message queue was dropped without sending a response, {:?}",
-                anyhow::anyhow!("hi :)")
-            );
-            panic!()
-        }
+        assert!(
+            self.tx.is_none(),
+            "SafeSender was dropped without sending a message"
+        );
     }
 }
 
@@ -201,7 +197,7 @@ impl Server {
                         None => {
                             log::warn!("Patch batch channel closed, stopping batching thread");
                             break;
-                        } // channel closed
+                        }
                     }
 
                     // Collect requests until timeout
@@ -211,7 +207,7 @@ impl Server {
                             batch.push(req);
                         } else {
                             log::warn!("Patch batch channel closed, stopping batching thread");
-                            break; // channel closed
+                            break;
                         }
                     }
 
@@ -222,7 +218,7 @@ impl Server {
                             by_slug.entry(req.slug.clone()).or_default().push((
                                 req.patch_version,
                                 req.patch_ref,
-                                TxEnforcer::new(req.sender),
+                                SafeSender::new(req.sender),
                             ));
                         }
                         for (slug, reqs) in by_slug {
@@ -388,7 +384,6 @@ impl Server {
                             let r = match r {
                                 Ok(data) => data,
                                 Err(e) => {
-                                    log::error!("RECV A: {e:?}");
                                     bail!(e);
                                 }
                             };
@@ -409,9 +404,8 @@ impl Server {
     async fn download_patch_data(
         &self,
         slug: Slug,
-        mut cache_misses: HashMap<(PatchVersion, PatchRef), Vec<TxEnforcer<Result<Bytes, String>>>>,
+        mut cache_misses: HashMap<(PatchVersion, PatchRef), Vec<SafeSender<Result<Bytes, String>>>>,
     ) {
-        log::debug!("Downloading {} refs for slug: {}", cache_misses.len(), slug);
         let mut errors = Vec::new();
 
         let base_patch_url = async {
@@ -466,14 +460,6 @@ impl Server {
                                     for sender in senders {
                                         _ = sender.send(Ok(bytes.clone()));
                                     }
-                                    // {
-                                    //     log::error!(
-                                    //         "Failed to send patch data to receiver for {} {:?}: {}",
-                                    //         patch_ref.0,
-                                    //         patch_ref.1,
-                                    //         e
-                                    //     );
-                                    // }
                                 } else {
                                     log::warn!(
                                         "No sender found for patch data {} {:?}",
@@ -505,7 +491,6 @@ impl Server {
                 for sender in senders {
                     _ = sender.send(Err(errors.clone()));
                 }
-                // log::error!("Failed to send error to receiver: {e}");
             });
         }
 

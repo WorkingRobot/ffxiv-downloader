@@ -139,9 +139,9 @@ impl Downloader {
             .context("Failed to create HTTP client")?;
 
         let limiter = RateLimiter::builder()
-            .max(64)
+            .max(32)
             .initial(64)
-            .refill(8)
+            .refill(16)
             .interval(Duration::from_millis(500))
             .build();
 
