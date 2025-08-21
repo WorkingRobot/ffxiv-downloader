@@ -129,7 +129,8 @@ impl Downloader {
     pub fn new(max_concurrent_downloads: usize) -> Result<Self> {
         Ok(Self {
             client: Client::builder()
-                .pool_max_idle_per_host(32)
+                .pool_max_idle_per_host(max_concurrent_downloads)
+                .read_timeout(std::time::Duration::from_secs(5))
                 .danger_accept_invalid_hostnames(true)
                 .user_agent("FFXIV PATCH CLIENT")
                 .build()
