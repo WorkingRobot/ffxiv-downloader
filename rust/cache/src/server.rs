@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
     BlockEngineBuilder, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
-    HybridCacheBuilder, IoEngineBuilder, RuntimeOptions, TokioRuntimeOptions, UringIoEngineBuilder,
+    HybridCacheBuilder, IoEngineBuilder, RuntimeOptions, TokioRuntimeOptions,
 };
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
@@ -35,6 +35,12 @@ use xiv_core::{
     },
     thaliak::get_all_repositories,
 };
+
+#[cfg(target_os = "linux")]
+type FoyerIoEngineBuilder = foyer::UringIoEngineBuilder;
+
+#[cfg(not(target_os = "linux"))]
+type FoyerIoEngineBuilder = foyer::PsyncIoEngineBuilder;
 
 use crate::{build, builder::ServerBuilder};
 
@@ -147,7 +153,7 @@ impl Server {
                 CacheKey::PatchData(..) => patch_ref_multiplier,
             })
             .storage()
-            .with_io_engine(UringIoEngineBuilder::default().build().await?)
+            .with_io_engine(FoyerIoEngineBuilder::default().build().await?)
             .with_compression(Compression::Zstd)
             .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()));
 
