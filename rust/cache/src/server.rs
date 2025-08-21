@@ -19,10 +19,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::{
     select,
-    sync::{
-        Mutex,
-        broadcast::{self, Sender},
-    },
+    sync::oneshot::{self, Sender},
     task::JoinHandle,
     time::MissedTickBehavior,
 };
@@ -65,11 +62,40 @@ enum CacheValue {
     PatchData(Vec<u8>),
 }
 
+struct TxEnforcer<T> {
+    tx: Option<Sender<T>>,
+}
+
+impl<T> TxEnforcer<T> {
+    pub fn new(tx: Sender<T>) -> Self {
+        Self { tx: Some(tx) }
+    }
+
+    pub fn send(mut self, value: T) -> Result<(), T> {
+        if let Some(tx) = self.tx.take() {
+            tx.send(value)
+        } else {
+            log::error!("Message queue is sending twice");
+            Err(value)
+        }
+    }
+}
+
+impl<T> Drop for TxEnforcer<T> {
+    fn drop(&mut self) {
+        if self.tx.is_some() {
+            log::error!(
+                "Message queue was dropped without sending a response, {:?}",
+                anyhow::anyhow!("hi :)")
+            );
+            panic!()
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Server(Arc<ServerImpl>);
-
-type InFlightResult = Result<Bytes, String>;
 
 #[derive(Debug)]
 struct ServerImpl {
@@ -77,8 +103,6 @@ struct ServerImpl {
     http_client: Client,
 
     downloader: Downloader,
-    // Track in-flight downloads to avoid duplicate requests
-    in_flight_downloads: Arc<Mutex<HashMap<CacheKey, Sender<InFlightResult>>>>,
 
     clut_path: String,
     clut_cache: Cache<(Slug, GameVersion), Arc<Clut>>,
@@ -156,7 +180,6 @@ impl Server {
             cache,
             http_client,
             downloader,
-            in_flight_downloads: Arc::default(),
             clut_path,
             clut_cache,
             slug_updater_thread: OnceLock::new(),
@@ -169,46 +192,50 @@ impl Server {
             let batching_server = this.clone();
             let mut rx = patch_batch_rx;
             tokio::spawn(async move {
-                let batch_interval = std::time::Duration::from_millis(250);
+                let batch_interval = std::time::Duration::from_millis(500);
                 loop {
                     let mut batch = Vec::new();
                     // Wait for at least one request or timeout
-                    match tokio::time::timeout(batch_interval, rx.recv()).await {
-                        Ok(Some(req)) => batch.push(req),
-                        Ok(None) => {
+                    match rx.recv().await {
+                        Some(req) => batch.push(req),
+                        None => {
                             log::warn!("Patch batch channel closed, stopping batching thread");
                             break;
                         } // channel closed
-                        Err(_) => continue, // timeout, no requests
                     }
-                    // Drain any additional requests that arrived during the interval
-                    while let Ok(req) = rx.try_recv() {
-                        batch.push(req);
+
+                    // Collect requests until timeout
+                    let end_time = tokio::time::Instant::now() + batch_interval;
+                    while let Ok(req) = tokio::time::timeout_at(end_time, rx.recv()).await {
+                        if let Some(req) = req {
+                            batch.push(req);
+                        } else {
+                            log::warn!("Patch batch channel closed, stopping batching thread");
+                            break; // channel closed
+                        }
                     }
+
                     if !batch.is_empty() {
                         // Group by slug for batch processing
-                        let mut by_slug: std::collections::HashMap<
-                            Slug,
-                            Vec<(PatchVersion, PatchRef, Sender<Result<Bytes, String>>)>,
-                        > = std::collections::HashMap::new();
+                        let mut by_slug: HashMap<_, Vec<_>> = HashMap::new();
                         for req in batch {
                             by_slug.entry(req.slug.clone()).or_default().push((
                                 req.patch_version,
                                 req.patch_ref,
-                                req.sender,
+                                TxEnforcer::new(req.sender),
                             ));
                         }
                         for (slug, reqs) in by_slug {
                             let batching_server = batching_server.clone();
+                            let mut cache_misses: HashMap<_, Vec<_>> = HashMap::new();
+                            for (ver, r, sender) in reqs {
+                                cache_misses.entry((ver, r)).or_default().push(sender);
+                            }
+
                             tokio::spawn(async move {
-                                // Prepare for download_patch_data signature
-                                let mut cache_misses = std::collections::HashMap::new();
-                                for (ver, r, sender) in reqs {
-                                    cache_misses.insert((ver, r), sender);
-                                }
                                 batching_server
                                     .download_patch_data(slug, cache_misses)
-                                    .await;
+                                    .await
                             });
                         }
                     }
@@ -333,45 +360,39 @@ impl Server {
                 let patch_key =
                     CacheKey::PatchData(slug, (*patch_ver).clone(), (*patch_ref).clone());
                 let patch_batch_tx = self.0.patch_batch_tx.clone();
-                let in_flight_downloads = self.0.in_flight_downloads.clone();
                 async move {
-                    // if cache.contains(&patch_key) {
-                    if let Some(CacheValue::PatchData(data)) =
-                        cache.obtain(patch_key.clone()).await?.as_deref().cloned()
+                    if cache.contains(&patch_key)
+                        && let Some(CacheValue::PatchData(data)) =
+                            cache.obtain(patch_key.clone()).await?.as_deref().cloned()
                     {
                         Ok::<_, anyhow::Error>(
                             ready(Ok(((patch_ver, patch_ref), Bytes::from(data)))).boxed(),
                         )
-                        // } else {
-                        //     Err(anyhow::anyhow!("Invalid cache value for patch data"))
-                        // }
                     } else {
-                        // Use in-flight tracking to deduplicate
-                        let mut in_flight = in_flight_downloads.lock().await;
-                        let receiver = if let Some(sender) = in_flight.get(&patch_key) {
-                            sender.subscribe()
-                        } else {
-                            let (sender, receiver) = broadcast::channel::<Result<Bytes, String>>(1);
-                            in_flight.insert(patch_key.clone(), sender.clone());
-                            // Enqueue the batch request
-                            let req = BatchPatchRequest {
-                                slug,
-                                patch_version: (*patch_ver).clone(),
-                                patch_ref: (*patch_ref).clone(),
-                                sender,
-                            };
-                            // Ignore send error (if channel closed, request is dropped)
-                            let _ = patch_batch_tx.send(req);
-                            receiver
+                        let (sender, receiver) = oneshot::channel();
+                        // Enqueue the batch request
+                        let req = BatchPatchRequest {
+                            slug,
+                            patch_version: (*patch_ver).clone(),
+                            patch_ref: (*patch_ref).clone(),
+                            sender,
                         };
-                        drop(in_flight);
+                        // Ignore send error (if channel closed, request is dropped)
+                        if let Err(e) = patch_batch_tx.send(req) {
+                            _ =
+                                e.0.sender
+                                    .send(Err("Failed to send out batch request".to_string()));
+                        }
                         Ok(async move {
-                            let mut receiver = receiver;
-                            receiver
-                                .recv()
-                                .await
-                                .context("In-flight download channel closed")?
-                                .map(|bytes| ((patch_ver, patch_ref), bytes))
+                            let r = receiver.await.context("In-flight download channel closed");
+                            let r = match r {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    log::error!("RECV A: {e:?}");
+                                    bail!(e);
+                                }
+                            };
+                            r.map(|bytes| ((patch_ver, patch_ref), bytes))
                                 .map_err(|err_str| anyhow::anyhow!(err_str))
                         }
                         .boxed())
@@ -388,8 +409,9 @@ impl Server {
     async fn download_patch_data(
         &self,
         slug: Slug,
-        mut cache_misses: HashMap<(PatchVersion, PatchRef), Sender<Result<Bytes, String>>>,
+        mut cache_misses: HashMap<(PatchVersion, PatchRef), Vec<TxEnforcer<Result<Bytes, String>>>>,
     ) {
+        log::debug!("Downloading {} refs for slug: {}", cache_misses.len(), slug);
         let mut errors = Vec::new();
 
         let base_patch_url = async {
@@ -416,51 +438,57 @@ impl Server {
                 let keys_to_download: Vec<(PatchVersion, PatchRef)> =
                     cache_misses.keys().cloned().collect();
                 let download_refs: Vec<_> = keys_to_download.iter().map(|(v, r)| (v, r)).collect();
-                let mut download_stream = self
+                let download_stream = self
                     .0
                     .downloader
                     .get_patch_data(&base_patch_url, download_refs.into_iter());
 
-                while let Some(result) = download_stream.next().await {
-                    match result {
-                        Ok((patch_ref, bytes)) => {
-                            // Store the downloaded data in the cache
-                            self.0.cache.insert(
-                                CacheKey::PatchData(
-                                    slug,
-                                    patch_ref.0.as_ref().clone(),
-                                    patch_ref.1.clone(),
-                                ),
-                                CacheValue::PatchData(bytes.to_vec()),
-                            );
-
-                            // Create the key to look up in cache_misses
-                            let lookup_key = (patch_ref.0.as_ref().clone(), patch_ref.1.clone());
-
-                            // Notify the subscriber of the download result
-                            if let Some(sender) = cache_misses.remove(&lookup_key) {
-                                _ = sender.send(Ok(bytes));
-                                // {
-                                //     log::error!(
-                                //         "Failed to send patch data to receiver for {} {:?}: {}",
-                                //         patch_ref.0,
-                                //         patch_ref.1,
-                                //         e
-                                //     );
-                                // }
-                            } else {
-                                log::warn!(
-                                    "No sender found for patch data {} {:?}",
-                                    patch_ref.0,
-                                    patch_ref.1
+                download_stream
+                    .for_each_concurrent(None, |result| {
+                        match result {
+                            Ok((patch_ref, bytes)) => {
+                                // Store the downloaded data in the cache
+                                self.0.cache.insert(
+                                    CacheKey::PatchData(
+                                        slug,
+                                        patch_ref.0.as_ref().clone(),
+                                        patch_ref.1.clone(),
+                                    ),
+                                    CacheValue::PatchData(bytes.to_vec()),
                                 );
+
+                                // Create the key to look up in cache_misses
+                                let lookup_key =
+                                    (patch_ref.0.as_ref().clone(), patch_ref.1.clone());
+
+                                // Notify the subscriber of the download result
+                                if let Some(senders) = cache_misses.remove(&lookup_key) {
+                                    for sender in senders {
+                                        _ = sender.send(Ok(bytes.clone()));
+                                    }
+                                    // {
+                                    //     log::error!(
+                                    //         "Failed to send patch data to receiver for {} {:?}: {}",
+                                    //         patch_ref.0,
+                                    //         patch_ref.1,
+                                    //         e
+                                    //     );
+                                    // }
+                                } else {
+                                    log::warn!(
+                                        "No sender found for patch data {} {:?}",
+                                        patch_ref.0,
+                                        patch_ref.1
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                errors.push(e);
                             }
                         }
-                        Err(e) => {
-                            errors.push(e);
-                        }
-                    }
-                }
+                        ready(())
+                    })
+                    .await;
             }
             Err(e) => {
                 errors.push(e);
@@ -473,11 +501,18 @@ impl Server {
                 .map(|e| format!("{e:?}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            cache_misses.drain().for_each(|(_, sender)| {
-                _ = sender.send(Err(errors.clone()));
+            cache_misses.drain().for_each(|(_, senders)| {
+                for sender in senders {
+                    _ = sender.send(Err(errors.clone()));
+                }
                 // log::error!("Failed to send error to receiver: {e}");
             });
         }
+
+        assert!(
+            cache_misses.is_empty(),
+            "Some patch data requests were not fulfilled"
+        );
     }
 
     pub async fn get_clut(&self, slug: Slug, version: GameVersion) -> Result<Arc<Clut>> {

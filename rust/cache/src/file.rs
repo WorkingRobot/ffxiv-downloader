@@ -11,6 +11,7 @@ use futures::{
     StreamExt, TryStreamExt,
     stream::{self, PollNext},
 };
+use itertools::Itertools;
 use xiv_core::{
     create_empty_file_block,
     file::{data_ref::DataRef, slug::Slug, version::GameVersion},
@@ -186,6 +187,14 @@ impl CacheFile {
     }
 
     pub async fn pread(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        let r = (&raw const buffer) as usize;
+        log::debug!(
+            "pread {r}: offset {}, len {}, file: {}",
+            offset,
+            buffer.len(),
+            self.file_name
+        );
+
         let mut buffer = OffsetBuffer::new(offset, buffer);
 
         let (ref_start, ref_end) = self
@@ -204,13 +213,24 @@ impl CacheFile {
                     .push(data_ref);
             }
         }
+
+        log::debug!("pread {r}: found {} data references", refs.len());
+
         let now = std::time::Instant::now();
         let download_stream = self
             .server
-            .get_patch_data(self.repository, patch_refs.keys().copied())
+            .get_patch_data(
+                self.repository,
+                patch_refs.keys().copied().collect_vec().into_iter(),
+            )
             .await
             .map_err(std::io::Error::other)?
             .map(|r| r.map(Either::Right));
+
+        log::debug!(
+            "pread {r}: download stream created, found {} patch references",
+            patch_refs.len()
+        );
         let plain_stream = stream::iter(
             refs.iter()
                 .filter(|r| !r.is_patch())
@@ -219,26 +239,45 @@ impl CacheFile {
         let full_stream =
             stream::select_with_strategy(plain_stream, download_stream, |()| PollNext::Right);
 
+        log::debug!("pread {r}: full stream created, starting to process");
+
         let mut overhead = Duration::ZERO;
         let mut calls = 0;
+        let refcount = patch_refs.len();
         full_stream
             .try_fold(
-                (&mut buffer, &mut overhead, &mut calls),
-                |(buffer_ref, d, c), operation| async {
+                (&mut buffer, &mut patch_refs, &mut overhead, &mut calls),
+                |(buffer_ref, patch_refs, d, c), operation| async {
                     let n = Instant::now();
                     match operation {
                         Either::Left(data_ref) => {
+                            // log::debug!("pread {r}: NORMREF {}/{}", *c + 1, refs.len());
                             Self::process_op_plain(data_ref, buffer_ref);
                         }
                         Either::Right(((version, patch_ref), bytes)) => {
-                            let refs = patch_refs.get(&(version, patch_ref)).ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "No patch references found for version {:?} and patch {:?}",
+                            // log::debug!(
+                            //     "pread {r}: PATCHREF {}/{} {}/{}",
+                            //     *c + 1,
+                            //     refs.len(),
+                            //     patch_refs.len(),
+                            //     refcount
+                            // );
+                            let refs =
+                                patch_refs.remove(&(version, patch_ref)).ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "No patch references found for version {:?} and patch {:?}",
+                                        version,
+                                        patch_ref
+                                    )
+                                })?;
+                            if refs.is_empty() {
+                                log::error!(
+                                    "REFS EMPTY: version {:?} and patch {:?}",
                                     version,
                                     patch_ref
-                                )
-                            })?;
-                            assert!(!refs.is_empty(), "Patch references should not be empty");
+                                );
+                            }
+                            // assert!(!refs.is_empty(), "Patch references should not be empty");
                             for patch_ref in refs {
                                 Self::process_op_patch(patch_ref, &bytes, buffer_ref);
                             }
@@ -246,11 +285,13 @@ impl CacheFile {
                     }
                     *d += n.elapsed();
                     *c += 1;
-                    Ok((buffer_ref, d, c))
+                    Ok((buffer_ref, patch_refs, d, c))
                 },
             )
             .await
             .map_err(std::io::Error::other)?;
+        log::debug!("pread {r}: processed {} operations", calls);
+
         let elapsed = now.elapsed();
         log::trace!(
             "pread completed in {:.2}ms ({:.2}ms; {calls} calls): offset {}, len {} ({})",
