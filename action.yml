@@ -30,7 +30,7 @@ outputs:
     description: "Version of the repository after the update."
 runs:
   using: "docker"
-  image: "docker://ghcr.io/workingrobot/ffxiv-downloader:v8.0.0"
+  image: "docker://ghcr.io/workingrobot/ffxiv-downloader:v8.1.0"
   args:
     - "--gha"
     - "download"
