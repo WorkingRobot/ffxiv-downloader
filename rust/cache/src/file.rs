@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
@@ -7,7 +11,6 @@ use futures::{
     StreamExt, TryStreamExt,
     stream::{self, PollNext},
 };
-use tokio::io::BufReader;
 use xiv_core::{
     create_empty_file_block,
     file::{data_ref::DataRef, slug::Slug, version::GameVersion},
@@ -93,10 +96,16 @@ pub struct CacheFile {
     server: Server,
     repository: Slug,
     file_data: Arc<Vec<DataRef>>,
+    file_name: String,
 }
 
 impl CacheFile {
-    pub fn new(server: Server, repository: Slug, file_data: Arc<Vec<DataRef>>) -> Result<Self> {
+    pub fn new(
+        server: Server,
+        repository: Slug,
+        file_data: Arc<Vec<DataRef>>,
+        file_name: String,
+    ) -> Result<Self> {
         if !file_data.is_sorted_by_key(|f| f.offset()) {
             bail!("File data is not sorted by offset");
         }
@@ -105,6 +114,7 @@ impl CacheFile {
             server,
             repository,
             file_data,
+            file_name,
         })
     }
 
@@ -120,7 +130,7 @@ impl CacheFile {
             .get(&file_path)
             .cloned()
             .ok_or_else(|| anyhow!("File not found in CLUT: {file_path}"))?;
-        Self::new(server.clone(), clut.header.repository, file_data)
+        Self::new(server.clone(), clut.header.repository, file_data, file_path)
     }
 
     pub async fn exists(
@@ -145,10 +155,6 @@ impl CacheFile {
 
     pub fn into_reader(self) -> CacheFileStream {
         CacheFileStream::new(self)
-    }
-
-    pub fn into_reader_buffered(self, capacity: usize) -> BufReader<CacheFileStream> {
-        BufReader::with_capacity(capacity, self.into_reader())
     }
 
     fn find_data_ref_idx(&self, offset: u64) -> Option<usize> {
@@ -198,7 +204,7 @@ impl CacheFile {
                     .push(data_ref);
             }
         }
-
+        let now = std::time::Instant::now();
         let download_stream = self
             .server
             .get_patch_data(self.repository, patch_refs.keys().copied())
@@ -213,30 +219,47 @@ impl CacheFile {
         let full_stream =
             stream::select_with_strategy(plain_stream, download_stream, |()| PollNext::Right);
 
+        let mut overhead = Duration::ZERO;
+        let mut calls = 0;
         full_stream
-            .try_fold(&mut buffer, |buffer_ref, operation| async {
-                match operation {
-                    Either::Left(data_ref) => {
-                        Self::process_op_plain(data_ref, buffer_ref);
-                    }
-                    Either::Right(((version, patch_ref), bytes)) => {
-                        let refs = patch_refs.get(&(version, patch_ref)).ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "No patch references found for version {:?} and patch {:?}",
-                                version,
-                                patch_ref
-                            )
-                        })?;
-                        assert!(!refs.is_empty(), "Patch references should not be empty");
-                        for patch_ref in refs {
-                            Self::process_op_patch(patch_ref, &bytes, buffer_ref);
+            .try_fold(
+                (&mut buffer, &mut overhead, &mut calls),
+                |(buffer_ref, d, c), operation| async {
+                    let n = Instant::now();
+                    match operation {
+                        Either::Left(data_ref) => {
+                            Self::process_op_plain(data_ref, buffer_ref);
+                        }
+                        Either::Right(((version, patch_ref), bytes)) => {
+                            let refs = patch_refs.get(&(version, patch_ref)).ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "No patch references found for version {:?} and patch {:?}",
+                                    version,
+                                    patch_ref
+                                )
+                            })?;
+                            assert!(!refs.is_empty(), "Patch references should not be empty");
+                            for patch_ref in refs {
+                                Self::process_op_patch(patch_ref, &bytes, buffer_ref);
+                            }
                         }
                     }
-                }
-                Ok(buffer_ref)
-            })
+                    *d += n.elapsed();
+                    *c += 1;
+                    Ok((buffer_ref, d, c))
+                },
+            )
             .await
             .map_err(std::io::Error::other)?;
+        let elapsed = now.elapsed();
+        log::trace!(
+            "pread completed in {:.2}ms ({:.2}ms; {calls} calls): offset {}, len {} ({})",
+            elapsed.as_secs_f32() * 1000.0,
+            overhead.as_secs_f32() * 1000.0,
+            buffer.offset(),
+            buffer.len(),
+            self.file_name
+        );
 
         Ok(())
     }

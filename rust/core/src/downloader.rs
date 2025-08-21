@@ -166,7 +166,7 @@ impl Downloader {
         version: &PatchVersion,
         mut patches: Vec<&PatchRef>,
     ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> + Send {
-        log::info!("Partially downloading {version}");
+        log::debug!("Partially downloading {version}");
 
         patches.sort_by_key(|patch| patch.offset);
         let mut merged_ranges: Vec<MergedRange> = vec![];
@@ -197,12 +197,13 @@ impl Downloader {
                 let url = format!("{base_patch_url}/{version}.patch");
                 async move {
                     let _permit = self.semaphore.acquire().await?;
-                    log::info!(
+                    log::debug!(
                         "Downloading {} ({:.2} MiB; {} ranges)",
                         url,
                         batch.0.iter().map(|r| r.size).sum::<u64>() as f64 / (1 << 20) as f64,
                         batch.0.len()
                     );
+                    let t = std::time::Instant::now();
                     let response = self
                         .client
                         .get(url)
@@ -234,7 +235,15 @@ impl Downloader {
                         }
                         Err(multer::Error::NoMultipart) => stream::once(async move {
                             let content_range = Self::get_content_range_bytes(response.headers())?;
+                            let rcv = t.elapsed();
                             let bytes = response.bytes().await?;
+                            let e = t.elapsed();
+                            log::trace!(
+                                "Downloaded {:.2} MiB in {:.2}ms (bytes in {:.2}ms)",
+                                bytes.len() as f64 / (1 << 20) as f64,
+                                e.as_secs_f32() * 1000.0,
+                                (e - rcv).as_secs_f32() * 1000.0
+                            );
                             Ok((content_range, bytes))
                         })
                         .boxed(),
