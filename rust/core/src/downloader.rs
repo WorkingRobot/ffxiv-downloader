@@ -13,7 +13,10 @@ use reqwest::{
     Client,
     header::{self, HeaderMap},
 };
-use std::{collections::HashMap, sync::Arc};
+use reqwest_leaky_bucket::leaky_bucket::RateLimiter;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{Jitter, RetryTransientMiddleware, policies::ExponentialBackoff};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use std::{fmt, io::Read};
 use tokio::sync::Semaphore;
 use tokio_util::io::StreamReader;
@@ -121,20 +124,40 @@ impl fmt::Display for RangeBatch {
 
 #[derive(Debug)]
 pub struct Downloader {
-    client: Client,
+    client: ClientWithMiddleware,
     semaphore: Semaphore,
 }
 
 impl Downloader {
     pub fn new(max_concurrent_downloads: usize) -> Result<Self> {
+        let client = Client::builder()
+            .pool_max_idle_per_host(max_concurrent_downloads)
+            .read_timeout(std::time::Duration::from_secs(5))
+            .danger_accept_invalid_hostnames(true)
+            .user_agent("FFXIV PATCH CLIENT")
+            .build()
+            .context("Failed to create HTTP client")?;
+
+        let limiter = RateLimiter::builder()
+            .max(64)
+            .initial(64)
+            .refill(8)
+            .interval(Duration::from_millis(500))
+            .build();
+
+        let retry_policy = ExponentialBackoff::builder()
+            .retry_bounds(Duration::from_secs(1), Duration::from_secs(15))
+            .jitter(Jitter::Bounded)
+            .base(2)
+            .build_with_total_retry_duration(Duration::from_secs(30));
+
+        let client = ClientBuilder::new(client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .with(reqwest_leaky_bucket::rate_limit_all(limiter))
+            .build();
+
         Ok(Self {
-            client: Client::builder()
-                .pool_max_idle_per_host(max_concurrent_downloads)
-                .read_timeout(std::time::Duration::from_secs(5))
-                .danger_accept_invalid_hostnames(true)
-                .user_agent("FFXIV PATCH CLIENT")
-                .build()
-                .context("Failed to create HTTP client")?,
+            client,
             semaphore: Semaphore::new(max_concurrent_downloads),
         })
     }
@@ -167,8 +190,6 @@ impl Downloader {
         version: &PatchVersion,
         mut patches: Vec<&PatchRef>,
     ) -> impl Stream<Item = Result<((Arc<PatchVersion>, PatchRef), Bytes)>> + Send {
-        log::debug!("Partially downloading {version}");
-
         patches.sort_by_key(|patch| patch.offset);
         let mut merged_ranges: Vec<MergedRange> = vec![];
         for patch_ref in patches {
@@ -197,12 +218,13 @@ impl Downloader {
                 let version = version.clone();
                 let url = format!("{base_patch_url}/{version}.patch");
                 async move {
-                    let _permit = self.semaphore.acquire().await?;
+                    let permit = self.semaphore.acquire().await?;
                     log::debug!(
-                        "Downloading {} ({:.2} MiB; {} ranges)",
+                        "Downloading {} ({:.2} MiB; {} ranges) {}",
                         url,
                         batch.0.iter().map(|r| r.size).sum::<u64>() as f64 / (1 << 20) as f64,
-                        batch.0.len()
+                        batch.0.len(),
+                        self.semaphore.available_permits()
                     );
                     let t = std::time::Instant::now();
                     let response = self
@@ -232,6 +254,7 @@ impl Downloader {
                                 let bytes = field.bytes().await?;
                                 Ok(Some(((content_range, bytes), multipart)))
                             });
+                            drop(permit);
                             stream.boxed()
                         }
                         Err(multer::Error::NoMultipart) => stream::once(async move {
@@ -239,12 +262,13 @@ impl Downloader {
                             let rcv = t.elapsed();
                             let bytes = response.bytes().await?;
                             let e = t.elapsed();
-                            log::trace!(
+                            log::debug!(
                                 "Downloaded {:.2} MiB in {:.2}ms (bytes in {:.2}ms)",
                                 bytes.len() as f64 / (1 << 20) as f64,
                                 e.as_secs_f32() * 1000.0,
                                 (e - rcv).as_secs_f32() * 1000.0
                             );
+                            drop(permit);
                             Ok((content_range, bytes))
                         })
                         .boxed(),
