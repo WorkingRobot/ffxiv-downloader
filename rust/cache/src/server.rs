@@ -36,10 +36,11 @@ use xiv_core::{
     thaliak::get_all_repositories,
 };
 
-#[cfg(target_os = "linux")]
-type FoyerIoEngineBuilder = foyer::UringIoEngineBuilder;
+// Doesn't work on Docker without seccomp changes, so let's just not touch it at all.
+// #[cfg(target_os = "linux")]
+// type FoyerIoEngineBuilder = foyer::UringIoEngineBuilder;
 
-#[cfg(not(target_os = "linux"))]
+// #[cfg(not(target_os = "linux"))]
 type FoyerIoEngineBuilder = foyer::PsyncIoEngineBuilder;
 
 use crate::{build, builder::ServerBuilder};
