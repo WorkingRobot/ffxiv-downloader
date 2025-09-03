@@ -199,7 +199,7 @@ impl DownloadCommand {
         };
 
         let mut diff = if let Some(source_clut) = source_clut {
-            ClutDiff::new(&target_clut, &source_clut)
+            ClutDiff::new(&source_clut, &target_clut)
                 .with_context(|| "Failed to create CLUT diff")?
         } else {
             ClutDiff::from(target_clut)
