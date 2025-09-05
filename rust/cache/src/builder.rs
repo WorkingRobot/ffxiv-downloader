@@ -17,6 +17,9 @@ pub struct ServerBuilder {
     pub(super) storage_directory: Option<PathBuf>,
     pub(super) storage_capacity_bytes: usize,
     pub(super) max_concurrent_downloads: usize,
+    #[cfg(feature = "prometheus")]
+    #[serde(skip)]
+    pub(super) prometheus_registry: Option<prometheus::Registry>,
 }
 
 impl ServerBuilder {
@@ -79,6 +82,13 @@ impl ServerBuilder {
         self
     }
 
+    #[cfg(feature = "prometheus")]
+    /// Prometheus registry for metrics
+    pub fn prometheus_registry(mut self, registry: prometheus::Registry) -> Self {
+        self.prometheus_registry = Some(registry);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<Server> {
         Server::new(self).await
     }
@@ -99,6 +109,8 @@ impl Default for ServerBuilder {
             storage_directory: None,
             storage_capacity_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             max_concurrent_downloads: 16,
+            #[cfg(feature = "prometheus")]
+            prometheus_registry: None,
         }
     }
 }

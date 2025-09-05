@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
     BlockEngineBuilder, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
-    HybridCacheBuilder, IoEngineBuilder, RuntimeOptions, TokioRuntimeOptions,
+    HybridCacheBuilder, IoEngineBuilder, NoopIoEngineBuilder, RuntimeOptions, TokioRuntimeOptions,
 };
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
@@ -138,6 +138,8 @@ impl Server {
             storage_directory,
             storage_capacity_bytes,
             max_concurrent_downloads,
+            #[cfg(feature = "prometheus")]
+            prometheus_registry,
         } = builder;
 
         // Create mpsc channel for batching patch data requests
@@ -145,7 +147,20 @@ impl Server {
 
         let mut cache = HybridCacheBuilder::new()
             .with_name("xiv-dl-cache")
-            .with_flush_on_close(true)
+            .with_flush_on_close(true);
+
+        #[cfg(feature = "prometheus")]
+        {
+            use mixtrics::registry::prometheus::PrometheusMetricsRegistry;
+
+            if let Some(prometheus_registry) = prometheus_registry {
+                cache = cache.with_metrics_registry(Box::new(PrometheusMetricsRegistry::new(
+                    prometheus_registry,
+                )));
+            }
+        }
+
+        let mut cache = cache
             .memory(ram_entry_capacity)
             .with_weighter(move |k, _| match k {
                 CacheKey::SlugList => 1,
@@ -153,19 +168,25 @@ impl Server {
                 CacheKey::ClutFile(..) => clut_data_multiplier,
                 CacheKey::PatchData(..) => patch_ref_multiplier,
             })
-            .storage()
-            .with_io_engine(FoyerIoEngineBuilder::default().build().await?)
-            .with_compression(Compression::Zstd)
-            .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()));
+            .storage();
 
-        if let Some(storage_directory) = storage_directory {
-            cache = cache.with_engine_config(BlockEngineBuilder::new(
-                FsDeviceBuilder::new(storage_directory)
-                    .with_capacity(storage_capacity_bytes)
-                    .build()?,
-            ))
+        if let Some(storage_directory) = &storage_directory {
+            cache = cache
+                .with_io_engine(FoyerIoEngineBuilder::default().build().await?)
+                .with_engine_config(BlockEngineBuilder::new(
+                    FsDeviceBuilder::new(storage_directory)
+                        .with_capacity(storage_capacity_bytes)
+                        .build()?,
+                ))
+        } else {
+            cache = cache.with_io_engine(NoopIoEngineBuilder::default().build().await?);
         }
-        let cache = cache.build().await?;
+
+        let cache = cache
+            .with_compression(Compression::Zstd)
+            .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()))
+            .build()
+            .await?;
 
         let http_client = Client::builder()
             .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))

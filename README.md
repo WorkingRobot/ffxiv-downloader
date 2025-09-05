@@ -20,7 +20,7 @@
 Here's an example build step:
 ```yaml
 - name: Download EXD Files
-  uses: WorkingRobot/ffxiv-downloader@v7
+  uses: WorkingRobot/ffxiv-downloader@v8
   with:
     output-path: exd-data
     regex: '^sqpack\/ffxiv\/0a0000\..+$'

@@ -9,6 +9,9 @@ edition = "2024"
 [lib]
 name = "xiv_cache"
 
+[features]
+prometheus = ["dep:prometheus", "dep:mixtrics"]
+
 [dependencies]
 xiv-dl-core = { path = "../core" }
 shadow-rs = { version = "1.2", default-features = false }
@@ -25,6 +28,8 @@ foyer = { version = "0.19", features = ["serde"] }
 mini-moka = "0.10"
 tokio-util = "0.7"
 itertools = "0.14"
+prometheus = { version = "0.14", optional = true }
+mixtrics = { version = "0.2", features = ["prometheus"], optional = true }
 
 [build-dependencies]
 shadow-rs = "1.2"
