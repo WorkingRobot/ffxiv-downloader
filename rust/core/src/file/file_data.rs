@@ -53,6 +53,8 @@ impl FileData {
             data_ref.set_len(length_varint.0);
         }
 
+        data.shrink_to_fit();
+
         Ok(data)
     }
 

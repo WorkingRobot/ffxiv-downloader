@@ -14,7 +14,7 @@ use foyer::{
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
 };
-use mini_moka::sync::Cache;
+use moka::future::Cache;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -529,60 +529,64 @@ impl Server {
     }
 
     pub async fn get_clut(&self, slug: Slug, version: GameVersion) -> Result<Arc<Clut>> {
-        if let Some(clut) = self.0.clut_cache.get(&(slug, version.clone())) {
-            return Ok(clut);
-        }
+        log::info!(
+            "Requesting CLUT {version} ({} in cache)",
+            self.0.clut_cache.entry_count()
+        );
+        self.0
+            .clut_cache
+            .try_get_with((slug, version.clone()), async {
+                let cache_result = self
+                    .0
+                    .cache
+                    .fetch(CacheKey::ClutFile(slug, version.clone()), || {
+                        let this = self.clone();
+                        let version = version.clone();
+                        async move {
+                            let clut_url =
+                                format!("{}/{}/{}.clut", this.0.clut_path, slug, version);
+                            async {
+                                log::debug!(
+                                    "Fetching CLUT file for slug: {}, version: {}",
+                                    slug,
+                                    version
+                                );
+                                let clut_bytes = this
+                                    .0
+                                    .http_client
+                                    .get(&clut_url)
+                                    .send()
+                                    .await?
+                                    .error_for_status()?
+                                    .bytes()
+                                    .await?;
+                                Ok(CacheValue::ClutFile(clut_bytes.to_vec()))
+                            }
+                            .await
+                            .map_err(foyer::Error::other::<reqwest::Error>)
+                        }
+                    })
+                    .await?;
 
-        let cache_result = self
-            .0
-            .cache
-            .fetch(CacheKey::ClutFile(slug, version.clone()), || {
-                let this = self.clone();
-                let version = version.clone();
-                async move {
-                    let clut_url = format!("{}/{}/{}.clut", this.0.clut_path, slug, version);
-                    async {
-                        log::debug!(
-                            "Fetching CLUT file for slug: {}, version: {}",
+                if let CacheValue::ClutFile(bytes) = cache_result.value() {
+                    let clut = Clut::read(Cursor::new(bytes))?;
+                    if clut.header.repository != slug {
+                        bail!(
+                            "Invalid CLUT file: expected repository {}, found {}",
                             slug,
-                            version
+                            clut.header.repository
                         );
-                        let clut_bytes = this
-                            .0
-                            .http_client
-                            .get(&clut_url)
-                            .send()
-                            .await?
-                            .error_for_status()?
-                            .bytes()
-                            .await?;
-                        Ok(CacheValue::ClutFile(clut_bytes.to_vec()))
                     }
-                    .await
-                    .map_err(foyer::Error::other::<reqwest::Error>)
+                    Ok(Arc::new(clut))
+                } else {
+                    bail!(
+                        "Invalid cache value for CLUT file: expected ClutFile, found {:?}",
+                        cache_result.value()
+                    );
                 }
             })
-            .await?;
-
-        if let CacheValue::ClutFile(bytes) = cache_result.value() {
-            let clut = Clut::read(Cursor::new(bytes))?;
-            if clut.header.repository != slug {
-                bail!(
-                    "Invalid CLUT file: expected repository {}, found {}",
-                    slug,
-                    clut.header.repository
-                );
-            }
-            let clut = Arc::new(clut);
-            self.0.clut_cache.insert((slug, version), clut.clone());
-
-            Ok(clut)
-        } else {
-            bail!(
-                "Invalid cache value for CLUT file: expected ClutFile, found {:?}",
-                cache_result.value()
-            );
-        }
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get CLUT: {e:?}"))
     }
 
     pub async fn close(&self) -> Result<()> {

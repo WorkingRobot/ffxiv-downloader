@@ -100,7 +100,7 @@ impl Default for ServerBuilder {
             clut_path:
                 "https://raw.githubusercontent.com/WorkingRobot/ffxiv-lut/refs/heads/main/cluts"
                     .to_string(),
-            clut_ram_capacity: 8,          // 8 CLUTs in RAM
+            clut_ram_capacity: 4,          // 4 CLUTs in RAM
             clut_tti_secs: 5 * 60,         // 5 minutes
             slug_update_interval_secs: 60, // 1 minute
             ram_entry_capacity: 16384,     // 16k "entries" in RAM

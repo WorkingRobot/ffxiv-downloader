@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::Result;
 use bytes::Bytes;
 use either::Either;
 use futures::{
@@ -17,7 +17,7 @@ use xiv_core::{
     file::{data_ref::DataRef, slug::Slug, version::GameVersion},
 };
 
-use crate::{server::Server, stream::CacheFileStream};
+use crate::{server::Server, stream::CacheFileStream, weakling::Weakling};
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct OffsetBuffer<'a> {
@@ -95,43 +95,53 @@ impl<'a> OffsetBuffer<'a> {
 #[derive(Debug, Clone)]
 pub struct CacheFile {
     server: Server,
-    repository: Slug,
-    file_data: Arc<Vec<DataRef>>,
+    slug: Slug,
+    version: GameVersion,
     file_name: String,
+    length: u64,
+    file_data: Weakling<Vec<DataRef>>,
 }
 
 impl CacheFile {
-    pub fn new(
+    pub async fn new(
         server: Server,
-        repository: Slug,
-        file_data: Arc<Vec<DataRef>>,
+        slug: Slug,
+        version: GameVersion,
         file_name: String,
-    ) -> Result<Self> {
+    ) -> std::io::Result<Self> {
+        let file_data = Self::fetch_file_data(&server, slug, version.clone(), &file_name).await?;
+
         if !file_data.is_sorted_by_key(|f| f.offset()) {
-            bail!("File data is not sorted by offset");
+            return Err(std::io::Error::other("File data is not sorted by offset"));
         }
+
+        let length = file_data.last().map_or(0, |f| f.offset() + f.len() as u64);
 
         Ok(Self {
             server,
-            repository,
-            file_data,
+            slug,
+            version,
             file_name,
+            length,
+            file_data: Arc::downgrade(&file_data).into(),
         })
     }
 
-    pub async fn fetch(
+    async fn fetch_file_data(
         server: &Server,
         slug: Slug,
         version: GameVersion,
-        file_path: String,
-    ) -> Result<Self> {
-        let clut = server.get_clut(slug, version).await?;
-        let file_data = clut
-            .files
-            .get(&file_path)
-            .cloned()
-            .ok_or_else(|| anyhow!("File not found in CLUT: {file_path}"))?;
-        Self::new(server.clone(), clut.header.repository, file_data, file_path)
+        file_path: &String,
+    ) -> std::io::Result<Arc<Vec<DataRef>>> {
+        let clut = server
+            .get_clut(slug, version)
+            .await
+            .map_err(std::io::Error::other)?;
+        let file_data =
+            clut.files.get(file_path).cloned().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")
+            })?;
+        Ok(file_data)
     }
 
     pub async fn exists(
@@ -144,28 +154,41 @@ impl CacheFile {
         Ok(clut.files.contains_key(&file_path))
     }
 
-    pub fn len(&self) -> u64 {
+    pub async fn file_data(&self) -> Arc<Vec<DataRef>> {
         self.file_data
-            .last()
-            .map_or(0, |f| f.offset() + f.len() as u64)
+            .fetch(async || {
+                Self::fetch_file_data(
+                    &self.server,
+                    self.slug,
+                    self.version.clone(),
+                    &self.file_name,
+                )
+                .await
+                .expect("Failed to fetch file data")
+            })
+            .await
+    }
+
+    pub fn len(&self) -> u64 {
+        self.length
     }
 
     pub fn is_empty(&self) -> bool {
-        self.file_data.is_empty() || self.len() == 0
+        self.length == 0
     }
 
     pub fn into_reader(self) -> CacheFileStream {
         CacheFileStream::new(self)
     }
 
-    fn find_data_ref_idx(&self, offset: u64) -> Option<usize> {
-        let result = self.file_data.binary_search_by_key(&offset, |r| r.offset());
+    async fn find_data_ref_idx(&self, offset: u64) -> Option<usize> {
+        let file_data = self.file_data().await;
+        let result = file_data.binary_search_by_key(&offset, |r| r.offset());
         match result {
             Ok(idx) => Some(idx),
             Err(idx)
                 if idx > 0
-                    && self
-                        .file_data
+                    && file_data
                         .get(idx - 1)
                         .map(|i| (i.offset() + i.len() as u64) > offset)
                         .unwrap_or_default() =>
@@ -176,9 +199,9 @@ impl CacheFile {
         }
     }
 
-    fn find_data_ref_range(&self, offset: u64, len: u64) -> Option<(usize, usize)> {
-        let start_idx = self.find_data_ref_idx(offset)?;
-        let end_idx = self.find_data_ref_idx(offset + len - 1)?;
+    async fn find_data_ref_range(&self, offset: u64, len: u64) -> Option<(usize, usize)> {
+        let start_idx = self.find_data_ref_idx(offset).await?;
+        let end_idx = self.find_data_ref_idx(offset + len - 1).await?;
         if start_idx <= end_idx {
             Some((start_idx, end_idx + 1)) // end_idx is inclusive
         } else {
@@ -191,11 +214,12 @@ impl CacheFile {
 
         let (ref_start, ref_end) = self
             .find_data_ref_range(buffer.offset(), buffer.len() as u64)
+            .await
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid offset or length")
             })?;
 
-        let refs = &self.file_data[ref_start..ref_end];
+        let refs = &self.file_data().await[ref_start..ref_end];
         let mut patch_refs = HashMap::new();
         for data_ref in refs {
             if let Some(patch_ref) = data_ref.patch() {
@@ -210,7 +234,7 @@ impl CacheFile {
         let download_stream = self
             .server
             .get_patch_data(
-                self.repository,
+                self.slug,
                 patch_refs.keys().copied().collect_vec().into_iter(),
             )
             .await
