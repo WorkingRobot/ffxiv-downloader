@@ -302,7 +302,7 @@ impl Server {
         Ok(this)
     }
 
-    async fn update_slugs(&self) -> Result<()> {
+    pub async fn update_slugs(&self) -> Result<()> {
         let repos = get_all_repositories(&self.0.http_client).await?;
 
         let mut slugs = Vec::new();
