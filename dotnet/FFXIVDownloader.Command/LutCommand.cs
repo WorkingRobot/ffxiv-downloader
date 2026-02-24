@@ -45,10 +45,11 @@ public class LutCommand
         {
             for (var i = chain.Count - 1; i >= 0; --i)
             {
-                var (ver, patch) = chain[i];
-                if (File.Exists(Path.Join(OutputPath, $"{ver:P}.lut")))
+                var (gameVer, patch) = chain[i];
+                var patchVer = patch.Version;
+                if (File.Exists(Path.Join(OutputPath, $"{patchVer}.lut")))
                 {
-                    Log.Info($"Skipping patch {ver}");
+                    Log.Info($"Skipping patch {patchVer}");
                     chain.RemoveAt(i);
                 }
             }
