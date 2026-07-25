@@ -9,12 +9,10 @@ namespace FFXIVDownloader.Lut;
 public sealed class ClutFileData
 {
     public List<ClutDataRef> Data { get; set; }
-    private int LastOptimizationSize { get; set; }
 
     public ClutFileData()
     {
         Data = [];
-        LastOptimizationSize = 0;
     }
 
     public ClutFileData(BinaryReader reader, ReadOnlySpan<PatchVersion> patchMap)
@@ -31,8 +29,6 @@ public sealed class ClutFileData
             item.ReadOffset(reader, ref lastOffset);
         foreach (ref var item in data)
             item.ReadLength(reader);
-
-        LastOptimizationSize = dataSize;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -115,15 +111,10 @@ public sealed class ClutFileData
 
     public void RemoveOverlaps(string name)
     {
-        if (LastOptimizationSize == Data.Count)
-            return;
-
-        (var intervals, Data) = (Data, []);
+        (var intervals, Data) = (Data, new(Data.Count));
         foreach (var interval in intervals)
             ApplyOverlay(Data, interval);
         VerifyOverlaps("Removal Overlap!");
-
-        LastOptimizationSize = Data.Count;
     }
 
     // Prints if there is any overlap between any blocks

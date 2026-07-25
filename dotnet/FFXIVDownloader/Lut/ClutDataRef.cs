@@ -223,7 +223,7 @@ public struct ClutDataRef : IEquatable<ClutDataRef>
         {
             RefType.Zero => FromZeros(source.AppliedVersion, fileOffset, length),
             RefType.EmptyBlock => throw new InvalidOperationException("Cannot slice an EmptyBlock"),
-            RefType.Patch => FromSplitPatchData(source.AppliedVersion, source.Patch!.Value, fileOffset, checked((int)(fileOffset - source.Offset + source.PatchOffset!.Value)), length),
+            RefType.Patch => FromSplitPatchData(source.AppliedVersion, source.Patch!.Value, fileOffset, checked((int)(fileOffset - source.Offset + (source.PatchOffset ?? 0))), length),
             _ => throw new InvalidOperationException("Unknown RefType"),
         };
     }
