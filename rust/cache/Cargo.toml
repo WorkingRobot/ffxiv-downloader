@@ -24,7 +24,7 @@ bytes = "1"
 futures = "0.3"
 url = "2"
 either = "1"
-foyer = { version = "0.19", features = ["serde"] }
+foyer = { version = "0.22", features = ["serde"] }
 moka = { version = "0.12", features = ["future"] }
 tokio-util = "0.7"
 itertools = "0.15"

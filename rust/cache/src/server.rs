@@ -8,8 +8,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
-    BlockEngineBuilder, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
-    HybridCacheBuilder, IoEngineBuilder, NoopIoEngineBuilder, RuntimeOptions, TokioRuntimeOptions,
+    BlockEngineConfig, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
+    HybridCacheBuilder, IoEngineConfig, NoopIoEngineConfig,
 };
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
@@ -38,10 +38,10 @@ use xiv_core::{
 
 // Doesn't work on Docker without seccomp changes, so let's just not touch it at all.
 // #[cfg(target_os = "linux")]
-// type FoyerIoEngineBuilder = foyer::UringIoEngineBuilder;
+// type FoyerIoEngineConfig = foyer::UringIoEngineConfig;
 
 // #[cfg(not(target_os = "linux"))]
-type FoyerIoEngineBuilder = foyer::PsyncIoEngineBuilder;
+type FoyerIoEngineConfig = foyer::PsyncIoEngineConfig;
 
 use crate::{build, builder::ServerBuilder};
 
@@ -173,21 +173,18 @@ impl Server {
 
         if let Some(storage_directory) = &storage_directory {
             cache = cache
-                .with_io_engine(FoyerIoEngineBuilder::default().build().await?)
-                .with_engine_config(BlockEngineBuilder::new(
+                .with_io_engine_config(FoyerIoEngineConfig::default())
+                .with_engine_config(BlockEngineConfig::new(
                     FsDeviceBuilder::new(storage_directory)
                         .with_capacity(storage_capacity_bytes)
                         .build()?,
                 ))
         } else {
-            cache = cache.with_io_engine(NoopIoEngineBuilder::default().build().await?);
+            cache = cache
+                .with_io_engine_config(Box::new(NoopIoEngineConfig) as Box<dyn IoEngineConfig>);
         }
 
-        let cache = cache
-            .with_compression(Compression::Zstd)
-            .with_runtime_options(RuntimeOptions::Unified(TokioRuntimeOptions::default()))
-            .build()
-            .await?;
+        let cache = cache.with_compression(Compression::Zstd).build().await?;
 
         let http_client = Client::builder()
             .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
@@ -356,7 +353,7 @@ impl Server {
 
     pub async fn get_slug_list(&self) -> Result<Vec<Slug>> {
         if let Some(CacheValue::SlugList(slugs)) =
-            self.0.cache.obtain(CacheKey::SlugList).await?.as_deref()
+            self.0.cache.get(&CacheKey::SlugList).await?.as_deref()
         {
             Ok(slugs.clone())
         } else {
@@ -366,7 +363,7 @@ impl Server {
 
     pub async fn get_slug(&self, slug: Slug) -> Result<SlugData> {
         if let Some(CacheValue::Slug(slug_data)) =
-            self.0.cache.obtain(CacheKey::Slug(slug)).await?.as_deref()
+            self.0.cache.get(&CacheKey::Slug(slug)).await?.as_deref()
         {
             Ok(slug_data.clone())
         } else {
@@ -388,7 +385,7 @@ impl Server {
                 async move {
                     if cache.contains(&patch_key)
                         && let Some(CacheValue::PatchData(data)) =
-                            cache.obtain(patch_key.clone()).await?.as_deref().cloned()
+                            cache.get(&patch_key).await?.as_deref().cloned()
                     {
                         Ok::<_, anyhow::Error>(
                             ready(Ok(((patch_ver, patch_ref), Bytes::from(data)))).boxed(),
@@ -540,31 +537,27 @@ impl Server {
                 let cache_result = self
                     .0
                     .cache
-                    .fetch(CacheKey::ClutFile(slug, version.clone()), || {
+                    .get_or_fetch(&CacheKey::ClutFile(slug, version.clone()), || {
                         let this = self.clone();
                         let version = version.clone();
                         async move {
                             let clut_url =
                                 format!("{}/{}/{}.clut", this.0.clut_path, slug, version);
-                            async {
-                                log::debug!(
-                                    "Fetching CLUT file for slug: {}, version: {}",
-                                    slug,
-                                    version
-                                );
-                                let clut_bytes = this
-                                    .0
-                                    .http_client
-                                    .get(&clut_url)
-                                    .send()
-                                    .await?
-                                    .error_for_status()?
-                                    .bytes()
-                                    .await?;
-                                Ok(CacheValue::ClutFile(clut_bytes.to_vec()))
-                            }
-                            .await
-                            .map_err(foyer::Error::other::<reqwest::Error>)
+                            log::debug!(
+                                "Fetching CLUT file for slug: {}, version: {}",
+                                slug,
+                                version
+                            );
+                            let clut_bytes = this
+                                .0
+                                .http_client
+                                .get(&clut_url)
+                                .send()
+                                .await?
+                                .error_for_status()?
+                                .bytes()
+                                .await?;
+                            Ok::<_, reqwest::Error>(CacheValue::ClutFile(clut_bytes.to_vec()))
                         }
                     })
                     .await?;
