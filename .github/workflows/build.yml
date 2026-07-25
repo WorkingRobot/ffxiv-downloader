@@ -149,10 +149,21 @@ jobs:
 
       - name: Create Release
         if: steps.check_release.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           fail_on_unmatched_files: true
           draft: false
+          make_latest: true
           files: |
             artifacts/*/*
+
+      # v1 produced drafts despite `draft: false`, and a draft is invisible to anything asking for
+      # the latest release: ffxiv-lut pinned itself to an 11-month-old binary that way. Assert the
+      # end state rather than trusting the create step to have got it right.
+      - name: Publish Release
+        if: steps.check_release.outputs.exists == 'false'
+        run: gh release edit "v$VERSION" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
