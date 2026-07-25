@@ -145,20 +145,21 @@ impl Server {
         // Create mpsc channel for batching patch data requests
         let (patch_batch_tx, patch_batch_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let mut cache = HybridCacheBuilder::new()
+        let cache = HybridCacheBuilder::new()
             .with_name("xiv-dl-cache")
             .with_flush_on_close(true);
 
         #[cfg(feature = "prometheus")]
-        {
-            use mixtrics::registry::prometheus::PrometheusMetricsRegistry;
+        let cache = match prometheus_registry {
+            Some(prometheus_registry) => {
+                use mixtrics::registry::prometheus::PrometheusMetricsRegistry;
 
-            if let Some(prometheus_registry) = prometheus_registry {
-                cache = cache.with_metrics_registry(Box::new(PrometheusMetricsRegistry::new(
+                cache.with_metrics_registry(Box::new(PrometheusMetricsRegistry::new(
                     prometheus_registry,
-                )));
+                )))
             }
-        }
+            None => cache,
+        };
 
         let mut cache = cache
             .memory(ram_entry_capacity)
