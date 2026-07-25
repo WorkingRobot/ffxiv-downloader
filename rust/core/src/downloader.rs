@@ -1,14 +1,11 @@
 use crate::file::patch_ref::PatchRef;
 use crate::file::version::PatchVersion;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use flate2::read::DeflateDecoder;
-use futures::{
-    FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, future,
-    stream::{self, try_unfold},
-};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, future, stream};
 use http_content_range::{ContentRange, ContentRangeBytes};
-use multer::{Multipart, parse_boundary};
+use multer::Multipart;
 use reqwest::{
     Client,
     header::{self, HeaderMap},
@@ -21,9 +18,8 @@ use std::{fmt, io::Read};
 use tokio::sync::Semaphore;
 use tokio_util::io::StreamReader;
 
-// Akamai restricts the range header size to at most 1034 bytes from my testing,
-// but it doesn't work sometimes, so use a smaller number
-const MAX_RANGE_HEADER_SIZE: usize = 1 << 12;
+const MAX_RANGE_HEADER_SIZE: usize = 8800;
+const MAX_RANGES_PER_REQUEST: usize = 400;
 const MIN_RANGE_DISTANCE: u64 = 1 << 9;
 
 /// Reference to a `DataRef` by its indices
@@ -57,10 +53,14 @@ impl MergedRange {
     }
 
     /// Try to add another patch reference to this range
-    /// Returns true if merged successfully, false if ranges are too far apart
-    /// Implements the C# `MergedRange.Add()` logic
+    ///
+    /// Returns true if merged, false if the reference starts too far past the end to be worth
+    /// pulling the bytes in between. Callers add references in ascending offset order, so the
+    /// comparison is against this range's end: testing the other direction can never be true for
+    /// sorted input, which silently merged every reference in a patch into one range spanning the
+    /// whole file.
     pub fn try_add(&mut self, patch_ref: &PatchRef) -> bool {
-        if (patch_ref.offset + patch_ref.size as u64 + MIN_RANGE_DISTANCE) < self.offset {
+        if patch_ref.offset > self.offset + self.size + MIN_RANGE_DISTANCE {
             false
         } else {
             self.size = self
@@ -93,8 +93,11 @@ pub struct RangeBatch(Vec<MergedRange>);
 
 impl RangeBatch {
     /// Try to add a range to this batch
-    /// Returns true if added successfully, false if it would exceed header size limit
+    /// Returns true if added successfully, false if it would exceed the range or header limits
     pub fn try_add(&mut self, range: MergedRange) -> bool {
+        if self.0.len() >= MAX_RANGES_PER_REQUEST {
+            return false;
+        }
         self.0.push(range);
         if self.to_range_header().len() > MAX_RANGE_HEADER_SIZE {
             self.0.pop(); // Remove last added range if it exceeds limit
@@ -193,115 +196,39 @@ impl Downloader {
         patches.sort_by_key(|patch| patch.offset);
         let mut merged_ranges: Vec<MergedRange> = vec![];
         for patch_ref in patches {
-            if let Some(last) = merged_ranges.last_mut() {
-                if last.try_add(patch_ref) {
-                    continue;
-                }
+            if let Some(last) = merged_ranges.last_mut()
+                && last.try_add(patch_ref)
+            {
+                continue;
             }
             merged_ranges.push(MergedRange::new(patch_ref.clone()));
         }
 
         let mut range_batches: Vec<RangeBatch> = vec![];
         for range in merged_ranges {
-            if let Some(last) = range_batches.last_mut() {
-                if last.try_add(range.clone()) {
-                    continue;
-                }
+            if let Some(last) = range_batches.last_mut()
+                && last.try_add(range.clone())
+            {
+                continue;
             }
             range_batches.push(RangeBatch(vec![range]));
         }
 
         let version = Arc::new(version.clone());
-        let batch_streams = range_batches
-            .into_iter()
-            .map(|batch| {
-                let version = version.clone();
-                let url = format!("{base_patch_url}/{version}.patch");
-                async move {
-                    let permit = self.semaphore.acquire().await?;
-                    log::debug!(
-                        "Downloading {} ({:.2} MiB; {} ranges) {}",
-                        url,
-                        batch.0.iter().map(|r| r.size).sum::<u64>() as f64 / (1 << 20) as f64,
-                        batch.0.len(),
-                        self.semaphore.available_permits()
-                    );
-                    let t = std::time::Instant::now();
-                    let response = self
-                        .client
-                        .get(url)
-                        .header(header::RANGE, batch.to_range_header())
-                        .send()
-                        .await?
-                        .error_for_status()?;
-                    let header = response
-                        .headers()
-                        .get(header::CONTENT_TYPE)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Missing Content-Type header in response")
-                        })?;
-                    let range_stream = match parse_boundary(header.to_str()?) {
-                        Ok(boundary) => {
-                            let reader = StreamReader::new(
-                                response.bytes_stream().map_err(std::io::Error::other),
-                            );
-                            let multipart = Multipart::with_reader(reader, boundary);
-                            let stream = try_unfold(multipart, |mut multipart| async move {
-                                let Some(field) = multipart.next_field().await? else {
-                                    return Ok(None);
-                                };
-                                let content_range = Self::get_content_range_bytes(field.headers())?;
-                                let bytes = field.bytes().await?;
-                                Ok(Some(((content_range, bytes), multipart)))
-                            });
-                            drop(permit);
-                            stream.boxed()
-                        }
-                        Err(multer::Error::NoMultipart) => stream::once(async move {
-                            let content_range = Self::get_content_range_bytes(response.headers())?;
-                            let rcv = t.elapsed();
-                            let bytes = response.bytes().await?;
-                            let e = t.elapsed();
-                            log::debug!(
-                                "Downloaded {:.2} MiB in {:.2}ms (bytes in {:.2}ms)",
-                                bytes.len() as f64 / (1 << 20) as f64,
-                                e.as_secs_f32() * 1000.0,
-                                (e - rcv).as_secs_f32() * 1000.0
-                            );
-                            drop(permit);
-                            Ok((content_range, bytes))
-                        })
-                        .boxed(),
-                        Err(e) => {
-                            bail!(e)
-                        }
-                    };
-                    let batch_ref = Arc::new(batch);
-                    let batch_stream = range_stream.and_then(move |(range, bytes)| {
-                        let batch = batch_ref.clone();
-                        let version = version.clone();
-                        async move {
-                            let range = batch
-                                .0
-                                .iter()
-                                .find(|r| {
-                                    r.offset == range.first_byte && r.end() == range.last_byte
-                                })
-                                .cloned()
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "No matching range found for {}-{} in batch",
-                                        range.first_byte,
-                                        range.last_byte
-                                    )
-                                })?;
-                            Ok(((version, range), bytes))
-                        }
-                    });
-                    Ok(batch_stream)
-                }
-            })
-            .map(|fut| fut.try_flatten_stream().boxed());
+        let batch_streams = range_batches.into_iter().map(|batch| {
+            let version = version.clone();
+            let url = format!("{base_patch_url}/{version}.patch");
+            async move {
+                let fetched = self.fetch_ranges(&url, &batch.0).await?;
+                Ok::<_, anyhow::Error>(stream::iter(
+                    fetched
+                        .into_iter()
+                        .map(move |(range, bytes)| Ok(((version.clone(), range), bytes))),
+                ))
+            }
+            .try_flatten_stream()
+            .boxed()
+        });
 
         let range_streams =
             stream::select_all(batch_streams).map_ok(|((version, range), bytes)| {
@@ -330,6 +257,109 @@ impl Downloader {
             });
 
         range_streams.try_flatten_unordered(None)
+    }
+
+    async fn fetch_ranges(
+        &self,
+        url: &str,
+        ranges: &[MergedRange],
+    ) -> Result<Vec<(MergedRange, Bytes)>> {
+        let parts = self.request_ranges(url, ranges).await?;
+        Self::pair_with_ranges(ranges, parts)
+    }
+
+    async fn request_ranges(
+        &self,
+        url: &str,
+        ranges: &[MergedRange],
+    ) -> Result<Vec<(ContentRangeBytes, Bytes)>> {
+        let permit = self.semaphore.acquire().await?;
+        let header = RangeBatch(ranges.to_vec()).to_range_header();
+        log::debug!(
+            "Downloading {} ({:.2} MiB; {} ranges) {}",
+            url,
+            ranges.iter().map(|r| r.size).sum::<u64>() as f64 / (1 << 20) as f64,
+            ranges.len(),
+            self.semaphore.available_permits()
+        );
+
+        let started = std::time::Instant::now();
+        let response = self
+            .client
+            .get(url)
+            .header(header::RANGE, header)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let boundary = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(Self::byteranges_boundary);
+
+        if let Some(boundary) = boundary {
+            let reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
+            let mut multipart = Multipart::with_reader(reader, boundary);
+            let mut parts = Vec::with_capacity(ranges.len());
+            while let Some(field) = multipart.next_field().await? {
+                let content_range = Self::get_content_range_bytes(field.headers())?;
+                parts.push((content_range, field.bytes().await?));
+            }
+            drop(permit);
+            return Ok(parts);
+        }
+
+        let content_range = Self::get_content_range_bytes(response.headers())?;
+        let bytes = response.bytes().await?;
+        log::debug!(
+            "Downloaded {:.2} MiB in {:.2}ms",
+            bytes.len() as f64 / (1 << 20) as f64,
+            started.elapsed().as_secs_f32() * 1000.0
+        );
+        drop(permit);
+        Ok(vec![(content_range, bytes)])
+    }
+
+    fn byteranges_boundary(content_type: &str) -> Option<String> {
+        let (media_type, parameters) = content_type.split_once(';')?;
+        if !media_type
+            .trim()
+            .eq_ignore_ascii_case("multipart/byteranges")
+        {
+            return None;
+        }
+        parameters.split(';').find_map(|parameter| {
+            let (key, value) = parameter.split_once('=')?;
+            key.trim()
+                .eq_ignore_ascii_case("boundary")
+                .then(|| value.trim().trim_matches('"').to_owned())
+        })
+    }
+
+    fn pair_with_ranges(
+        ranges: &[MergedRange],
+        parts: Vec<(ContentRangeBytes, Bytes)>,
+    ) -> Result<Vec<(MergedRange, Bytes)>> {
+        parts
+            .into_iter()
+            .map(|(content_range, bytes)| {
+                ranges
+                    .iter()
+                    .find(|r| {
+                        r.offset == content_range.first_byte && r.end() == content_range.last_byte
+                    })
+                    .cloned()
+                    .map(|range| (range, bytes))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No matching range found for {}-{} in batch",
+                            content_range.first_byte,
+                            content_range.last_byte
+                        )
+                    })
+            })
+            .collect()
     }
 
     fn get_content_range_bytes(headers: &HeaderMap) -> Result<ContentRangeBytes> {
@@ -363,5 +393,76 @@ impl Downloader {
             .context("Failed to decompress patch data")?;
 
         Ok(decompressed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patch_ref(offset: u64, size: u32) -> PatchRef {
+        PatchRef {
+            offset,
+            size,
+            is_compressed: false,
+        }
+    }
+
+    #[test]
+    fn merges_adjacent_and_nearby_references() {
+        let mut range = MergedRange::new(patch_ref(1000, 100));
+        assert!(range.try_add(&patch_ref(1100, 100)), "contiguous");
+        assert!(
+            range.try_add(&patch_ref(1200 + MIN_RANGE_DISTANCE, 50)),
+            "within the merge distance"
+        );
+        assert_eq!(range.offset, 1000);
+        assert_eq!(range.size, 250 + MIN_RANGE_DISTANCE);
+        assert_eq!(range.parts.len(), 3);
+    }
+
+    #[test]
+    fn refuses_a_reference_past_the_merge_distance() {
+        let mut range = MergedRange::new(patch_ref(0, 1024));
+        assert!(!range.try_add(&patch_ref(1024 + MIN_RANGE_DISTANCE + 1, 16)));
+        assert_eq!(
+            range.size, 1024,
+            "a refused reference must not grow the range"
+        );
+        assert_eq!(range.parts.len(), 1);
+    }
+
+    #[test]
+    fn reads_the_boundary_out_of_a_byteranges_content_type() {
+        assert_eq!(
+            Downloader::byteranges_boundary("multipart/byteranges; boundary=04257D9608554D01"),
+            Some("04257D9608554D01".to_owned())
+        );
+        assert_eq!(
+            Downloader::byteranges_boundary("multipart/byteranges;boundary=\"quoted\""),
+            Some("quoted".to_owned())
+        );
+        // A single-range reply must not be mistaken for a multipart one.
+        assert_eq!(Downloader::byteranges_boundary("text/plain"), None);
+        assert_eq!(
+            Downloader::byteranges_boundary("multipart/form-data; boundary=x"),
+            None
+        );
+    }
+
+    #[test]
+    fn batches_many_ranges_within_the_documented_limits() {
+        let mut batch = RangeBatch(vec![]);
+        let mut added = 0;
+        for i in 0..10_000u64 {
+            if !batch.try_add(MergedRange::new(patch_ref(i * 1_000_000, 16))) {
+                break;
+            }
+            added += 1;
+        }
+        assert!(added > 1, "multi-range requests are the point of batching");
+        assert!(added <= MAX_RANGES_PER_REQUEST);
+        assert!(batch.to_range_header().len() <= MAX_RANGE_HEADER_SIZE);
+        assert!(batch.to_range_header().starts_with("bytes="));
     }
 }
