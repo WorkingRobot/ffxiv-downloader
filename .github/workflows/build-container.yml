@@ -18,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          fetch-tags: true
+          fetch-tags: false
           submodules: recursive
 
       - name: Check Version
