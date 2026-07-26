@@ -58,16 +58,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Setup .NET
         if: matrix.type.id == 'dotnet'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "9.0"
-    
+          dotnet-version: "10.0"
+
       - name: Build (.NET)
         if: matrix.type.id == 'dotnet'
         run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true dotnet/FFXIVDownloader.Command
@@ -86,21 +86,21 @@ jobs:
         shell: bash
         run: |
           mv -f build/FFXIVDownloader.Command${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-      
+
       - name: Rename Binary (Rust)
         if: matrix.type.id == 'rust'
         shell: bash
         run: |
           mv -f rust/target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-      
+
       - name: Attest
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-      
+
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}
           path: |
@@ -116,14 +116,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
           submodules: recursive
 
       - name: Check Version
         id: version
-        uses: issue-ops/semver@v2
+        uses: issue-ops/semver@v3
         with:
           manifest-path: action.yml
           workspace: ${{ github.workspace }}
@@ -143,13 +143,13 @@ jobs:
 
       - name: Download All Builds
         if: steps.check_release.outputs.exists == 'false'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
       - name: Create Release
         if: steps.check_release.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
           fail_on_unmatched_files: true
@@ -158,12 +158,12 @@ jobs:
           files: |
             artifacts/*/*
 
-      # v1 produced drafts despite `draft: false`, and a draft is invisible to anything asking for
-      # the latest release: ffxiv-lut pinned itself to an 11-month-old binary that way. Assert the
-      # end state rather than trusting the create step to have got it right.
       - name: Publish Release
-        if: steps.check_release.outputs.exists == 'false'
-        run: gh release edit "v$VERSION" --draft=false --latest
+        shell: bash
+        run: |
+          newest=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sort -V | tail -1)
+          [ "$newest" = "v$VERSION" ] && latest=true || latest=false
+          gh release edit "v$VERSION" --draft=false --latest="$latest"
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
