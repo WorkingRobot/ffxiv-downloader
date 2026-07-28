@@ -7,14 +7,14 @@ use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, future, 
 use http_content_range::{ContentRange, ContentRangeBytes};
 use multer::Multipart;
 use reqwest::{
-    Client,
+    Client, StatusCode,
     header::{self, HeaderMap},
 };
 use reqwest_leaky_bucket::leaky_bucket::RateLimiter;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{Jitter, RetryTransientMiddleware, policies::ExponentialBackoff};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use std::{fmt, io::Read};
+use std::{fmt, io::Read, slice};
 use tokio::sync::Semaphore;
 use tokio_util::io::StreamReader;
 
@@ -264,7 +264,16 @@ impl Downloader {
         ranges: &[MergedRange],
     ) -> Result<Vec<(MergedRange, Bytes)>> {
         let parts = self.request_ranges(url, ranges).await?;
-        Self::pair_with_ranges(ranges, parts)
+        let paired = Self::pair_with_ranges(ranges, parts)?;
+        // A server may answer a request for several ranges with only one of them, which pairs up
+        // cleanly and leaves the refs behind the rest holding no data at all.
+        anyhow::ensure!(
+            paired.len() == ranges.len(),
+            "{url} answered {} of {} requested ranges",
+            paired.len(),
+            ranges.len()
+        );
+        Ok(paired)
     }
 
     async fn request_ranges(
@@ -290,6 +299,24 @@ impl Downloader {
             .send()
             .await?
             .error_for_status()?;
+
+        // A server that will not serve several ranges at once answers with the whole file rather
+        // than a 206, which for a patch is tens of megabytes to reach a few kilobytes. The Korean
+        // CDN serves one range at a time perfectly well, so ask it that way instead. Dropping the
+        // response before its body is read leaves the download unmade.
+        if response.status() == StatusCode::OK && ranges.len() > 1 {
+            drop(response);
+            drop(permit);
+            log::debug!(
+                "{url} ignored a {}-range request; asking singly",
+                ranges.len()
+            );
+            let mut parts = Vec::with_capacity(ranges.len());
+            for range in ranges {
+                parts.extend(Box::pin(self.request_ranges(url, slice::from_ref(range))).await?);
+            }
+            return Ok(parts);
+        }
 
         let boundary = response
             .headers()
