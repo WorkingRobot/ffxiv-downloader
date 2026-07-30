@@ -16,7 +16,7 @@ use std::{
     path::Path,
 };
 use std::{io::Cursor, path::PathBuf};
-use xiv_core::file::clut::Clut;
+use xiv_core::file::clut_lazy::LazyClut;
 use xiv_core::file::types::CompressType;
 
 use crate::download::{DownloadCommand, DownloadConfigArgs};
@@ -134,7 +134,7 @@ fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<PathBuf>> {
 fn test_clut_file<P: AsRef<Path>>(file_path: P) -> anyhow::Result<()> {
     let path = file_path.as_ref();
     let data = fs::read(path)?;
-    let _clut_file = Clut::read(Cursor::new(data))?;
+    let _clut_file = LazyClut::read(Cursor::new(data))?;
     Ok(())
 }
 

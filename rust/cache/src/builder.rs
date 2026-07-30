@@ -8,7 +8,8 @@ use crate::server::Server;
 #[serde(default)]
 pub struct ServerBuilder {
     pub(super) clut_path: String,
-    pub(super) clut_ram_capacity: u64,
+    pub(super) clut_ram_bytes: u64,
+    pub(super) batch_window_ms: u64,
     pub(super) clut_tti_secs: u64,
     pub(super) slug_update_interval_secs: u64,
     pub(super) ram_entry_capacity: usize,
@@ -28,9 +29,17 @@ impl ServerBuilder {
         self
     }
 
-    /// Maximum number of parsed CLUTs to keep in RAM
-    pub fn clut_ram_capacity(mut self, capacity: u64) -> Self {
-        self.clut_ram_capacity = capacity;
+    /// How many bytes of parsed CLUTs to keep in RAM.
+    pub fn clut_ram_bytes(mut self, bytes: u64) -> Self {
+        self.clut_ram_bytes = bytes;
+        self
+    }
+
+    /// How long to gather patch-data requests before issuing them as one ranged
+    /// request. A read submits all of its references at once, so this only needs to be
+    /// long enough to merge concurrent readers; every miss waits this long.
+    pub fn batch_window_ms(mut self, ms: u64) -> Self {
+        self.batch_window_ms = ms;
         self
     }
 
@@ -100,8 +109,9 @@ impl Default for ServerBuilder {
             clut_path:
                 "https://raw.githubusercontent.com/WorkingRobot/ffxiv-lut/refs/heads/main/cluts"
                     .to_string(),
-            clut_ram_capacity: 4,          // 4 CLUTs in RAM
-            clut_tti_secs: 5 * 60,         // 5 minutes
+            clut_ram_bytes: 512 << 20, // 512 MiB of parsed CLUTs
+            batch_window_ms: 20,
+            clut_tti_secs: 30 * 60,        // 30 minutes
             slug_update_interval_secs: 60, // 1 minute
             ram_entry_capacity: 16384,     // 16k "entries" in RAM
             clut_data_multiplier: 1024,    // 1024x multiplier for CLUT data in RAM cache

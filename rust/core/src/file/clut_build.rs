@@ -4,7 +4,8 @@ use std::io::{Cursor, Write};
 use anyhow::{Context, Result, ensure};
 use binrw::{BinWrite, Endian};
 
-use super::clut::{Clut, compress_chunk};
+use super::clut::compress_chunk;
+use super::clut_lazy::LazyClut;
 use super::data_ref::DataRef;
 use super::file_data::{FileData, PatchIndex};
 use super::header::Header;
@@ -45,17 +46,17 @@ impl ClutBuilder {
 
     /// Resume from an already-built CLUT. Its files start dirty: nothing here can
     /// prove the references in an arbitrary CLUT are already disjoint.
-    pub fn from_clut(clut: &Clut) -> Self {
-        Self {
+    pub fn from_clut(clut: &LazyClut) -> Result<Self> {
+        let files: BTreeMap<String, Vec<DataRef>> = clut
+            .files()
+            .map(|path| Ok((path.to_string(), clut.file_refs(path)?)))
+            .collect::<Result<_>>()?;
+        Ok(Self {
             header: clut.header.clone(),
             folders: clut.folders.iter().cloned().collect(),
-            files: clut
-                .files
-                .iter()
-                .map(|(path, refs)| (path.clone(), refs.as_ref().clone()))
-                .collect(),
-            dirty: clut.files.keys().cloned().collect(),
-        }
+            dirty: files.keys().cloned().collect(),
+            files,
+        })
     }
 
     /// Fold one patch's chunk into the install. Chunks that describe no file content

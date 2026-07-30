@@ -90,10 +90,9 @@ impl<T> SafeSender<T> {
 
 impl<T> Drop for SafeSender<T> {
     fn drop(&mut self) {
-        assert!(
-            self.tx.is_none(),
-            "SafeSender was dropped without sending a message"
-        );
+        if self.tx.is_some() {
+            log::debug!("dropping an unanswered patch data request");
+        }
     }
 }
 
@@ -130,7 +129,8 @@ impl Server {
     pub(super) async fn new(builder: ServerBuilder) -> Result<Self> {
         let ServerBuilder {
             clut_path,
-            clut_ram_capacity,
+            clut_ram_bytes,
+            batch_window_ms,
             clut_tti_secs,
             slug_update_interval_secs,
             ram_entry_capacity,
@@ -195,7 +195,8 @@ impl Server {
         let downloader = Downloader::new(max_concurrent_downloads)?;
 
         let clut_cache = Cache::builder()
-            .max_capacity(clut_ram_capacity)
+            .max_capacity(clut_ram_bytes)
+            .weigher(|_, clut: &Arc<LazyClut>| clut.resident_size().try_into().unwrap_or(u32::MAX))
             .time_to_idle(std::time::Duration::from_secs(clut_tti_secs))
             .build();
 
@@ -215,7 +216,7 @@ impl Server {
             let batching_server = this.clone();
             let mut rx = patch_batch_rx;
             tokio::spawn(async move {
-                let batch_interval = std::time::Duration::from_millis(500);
+                let batch_interval = std::time::Duration::from_millis(batch_window_ms);
                 loop {
                     let mut batch = Vec::new();
                     // Wait for at least one request or timeout
@@ -384,9 +385,8 @@ impl Server {
                     CacheKey::PatchData(slug, (*patch_ver).clone(), (*patch_ref).clone());
                 let patch_batch_tx = self.0.patch_batch_tx.clone();
                 async move {
-                    if cache.contains(&patch_key)
-                        && let Some(CacheValue::PatchData(data)) =
-                            cache.get(&patch_key).await?.as_deref().cloned()
+                    if let Some(CacheValue::PatchData(data)) =
+                        cache.get(&patch_key).await?.as_deref().cloned()
                     {
                         Ok::<_, anyhow::Error>(
                             ready(Ok(((patch_ver, patch_ref), Bytes::from(data)))).boxed(),
@@ -598,6 +598,11 @@ impl Server {
     /// file's size. For an indexed CLUT the sizes come out of the index, so no ref is
     /// decoded. The result is not cached here; cache it in the caller if needed.
     pub async fn get_clut_index(&self, slug: Slug, version: GameVersion) -> Result<ClutIndex> {
+        // Parsing an indexed CLUT is cheap, but re-reading its bytes is not, and a
+        // browse usually follows a read of the same version.
+        if let Some(clut) = self.0.clut_cache.get(&(slug, version.clone())).await {
+            return Ok(clut.index());
+        }
         let bytes = self.fetch_clut_bytes(slug, version.clone()).await?;
         let clut = LazyClut::read(Cursor::new(&bytes))?;
         Self::check_clut(&clut, slug, &version)?;

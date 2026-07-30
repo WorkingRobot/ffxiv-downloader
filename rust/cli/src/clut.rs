@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use reqwest::Client;
-use xiv_core::file::clut::Clut;
+use xiv_core::file::clut::decompress;
 use xiv_core::file::clut_build::ClutBuilder;
 use xiv_core::file::clut_lazy::LazyClut;
 use xiv_core::file::header::Header;
@@ -43,12 +43,12 @@ pub struct ClutArgs {
     #[arg(short, long, value_name = "DIR")]
     pub output_path: Option<PathBuf>,
     /// Compression for the CLUT payload
-    #[arg(short, long, value_name = "TYPE", default_value_t = Compression::Brotli)]
+    #[arg(short, long, value_name = "TYPE", default_value_t = Compression::Zstd)]
     pub compression: Compression,
     /// CLUT format version. 3 splits the payload into independently compressed chunks
-    /// and adds an index, so a reader can decode one file without expanding the rest;
-    /// only readers built from this repository understand it.
-    #[arg(long, value_name = "N", default_value_t = 2)]
+    /// and adds an index, so a reader decodes one file without expanding the rest; 2 is
+    /// a single stream every reader has to inflate whole.
+    #[arg(long, value_name = "N", default_value_t = 3)]
     pub clut_version: u16,
     /// Rewrite CLUTs whose content is already on disk unchanged
     #[arg(long)]
@@ -92,7 +92,7 @@ pub async fn run(args: ClutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resu
             let bytes = fetcher
                 .bytes(location, &GameVersion::epoch().to_string(), "clut")
                 .await?;
-            let mut builder = ClutBuilder::from_clut(&Clut::read(Cursor::new(bytes))?);
+            let mut builder = ClutBuilder::from_clut(&LazyClut::read(Cursor::new(bytes))?)?;
             builder.header.repository = args.slug.parse()?;
             builder
         }
@@ -166,7 +166,7 @@ fn holds(path: &Path, payload: &[u8], format: Version, compression: CompressType
     let Ok(file) = File::open(path) else {
         return false;
     };
-    match Clut::decompress(BufReader::new(file)) {
+    match decompress(BufReader::new(file)) {
         Ok((header, existing)) => {
             header.file_version == format
                 && header.compression == compression

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, ensure};
 use binrw::{BinRead, BinWrite, Endian};
 
-use super::clut::{Clut, ClutIndex, compress_chunk, decompress_chunk};
+use super::clut::{ClutIndex, compress_chunk, decompress_chunk, decompress_payload, read_strings};
 use super::data_ref::DataRef;
 use super::file_data::{FileData, PatchIndex};
 use super::header::Header;
@@ -142,7 +142,7 @@ impl LazyClut {
                         .context("CLUT chunk runs past the payload")?,
                     first.decompressed_len as usize,
                 )?;
-                let (versions, folders, names) = Clut::read_strings(&mut Cursor::new(&strings))?;
+                let (versions, folders, names) = read_strings(&mut Cursor::new(&strings))?;
 
                 Self::build(
                     header,
@@ -160,10 +160,9 @@ impl LazyClut {
             }
             // No index, so block boundaries have to be walked out of the payload.
             None => {
-                let blob: Arc<[u8]> =
-                    Clut::decompress_payload(&header, None, &mut reader)?.into();
+                let blob: Arc<[u8]> = decompress_payload(&header, None, &mut reader)?.into();
                 let mut cursor = Cursor::new(&blob[..]);
-                let (versions, folders, names) = Clut::read_strings(&mut cursor)?;
+                let (versions, folders, names) = read_strings(&mut cursor)?;
                 let blocks = names
                     .iter()
                     .map(|_| Block::scan(&mut cursor, &versions, STRIDE, 0))
@@ -221,6 +220,24 @@ impl LazyClut {
     /// Every file's path, in payload order.
     pub fn files(&self) -> impl Iterator<Item = &str> {
         self.files.iter().map(|(name, _)| name.as_str())
+    }
+
+    /// Roughly what this occupies in memory.
+    pub fn resident_size(&self) -> usize {
+        let payload = match &self.payload {
+            Payload::Whole(blob) => blob.len(),
+            // Decompressed chunks are transient; the compressed payload is not.
+            Payload::Chunked { compressed, .. } => compressed.len(),
+        };
+        let index: usize = self
+            .files
+            .iter()
+            .map(|(name, block)| {
+                name.len() + block.checkpoints.len() * size_of::<Checkpoint>() + size_of::<Block>()
+            })
+            .sum();
+        let names = self.by_name.keys().map(String::len).sum::<usize>();
+        payload + index + names + self.folders.iter().map(String::len).sum::<usize>()
     }
 
     pub fn file_size(&self, path: &str) -> Option<u64> {
@@ -625,9 +642,15 @@ impl Block {
         self.chunk.write_options(writer, Endian::Little, ())?;
         (self.checkpoints.len() as u32).write_options(writer, Endian::Little, ())?;
         for checkpoint in &self.checkpoints {
-            checkpoint.structs.write_options(writer, Endian::Little, ())?;
-            checkpoint.offsets.write_options(writer, Endian::Little, ())?;
-            checkpoint.lengths.write_options(writer, Endian::Little, ())?;
+            checkpoint
+                .structs
+                .write_options(writer, Endian::Little, ())?;
+            checkpoint
+                .offsets
+                .write_options(writer, Endian::Little, ())?;
+            checkpoint
+                .lengths
+                .write_options(writer, Endian::Little, ())?;
             checkpoint
                 .patch_offset
                 .write_options(writer, Endian::Little, ())?;
@@ -641,6 +664,7 @@ impl Block {
 
 #[cfg(test)]
 mod tests {
+    use super::super::clut::decompress;
     use super::*;
     use crate::file::types::PlatformId;
     use crate::file::utils::VarInt32;
@@ -659,19 +683,31 @@ mod tests {
         let mut blob = Cursor::new(Vec::new());
         let le = Endian::Little;
 
-        (PATCHES.len() as i32).write_options(&mut blob, le, ()).unwrap();
+        (PATCHES.len() as i32)
+            .write_options(&mut blob, le, ())
+            .unwrap();
         for patch in PATCHES {
-            NetString(patch.to_string()).write_options(&mut blob, le, ()).unwrap();
+            NetString(patch.to_string())
+                .write_options(&mut blob, le, ())
+                .unwrap();
         }
         (1i32).write_options(&mut blob, le, ()).unwrap();
-        NetString("sqpack/ffxiv".to_string()).write_options(&mut blob, le, ()).unwrap();
-        (files.len() as i32).write_options(&mut blob, le, ()).unwrap();
+        NetString("sqpack/ffxiv".to_string())
+            .write_options(&mut blob, le, ())
+            .unwrap();
+        (files.len() as i32)
+            .write_options(&mut blob, le, ())
+            .unwrap();
         for (name, _) in files {
-            NetString(name.to_string()).write_options(&mut blob, le, ()).unwrap();
+            NetString(name.to_string())
+                .write_options(&mut blob, le, ())
+                .unwrap();
         }
 
         for (_, ref_count) in files {
-            (*ref_count as i32).write_options(&mut blob, le, ()).unwrap();
+            (*ref_count as i32)
+                .write_options(&mut blob, le, ())
+                .unwrap();
 
             let mut patch_offset = 0u64;
             for i in 0..*ref_count {
@@ -693,14 +729,20 @@ mod tests {
                             .write_options(&mut blob, le, ())
                             .unwrap();
                         patch_offset = target;
-                        VarUInt32(ref_len(i)).write_options(&mut blob, le, ()).unwrap();
-                        u8::from(i % 8 == 0).write_options(&mut blob, le, ()).unwrap();
+                        VarUInt32(ref_len(i))
+                            .write_options(&mut blob, le, ())
+                            .unwrap();
+                        u8::from(i % 8 == 0)
+                            .write_options(&mut blob, le, ())
+                            .unwrap();
                         if raw_type == 0 {
                             VarUInt32(i % 512).write_options(&mut blob, le, ()).unwrap();
                         }
                     }
                     2 => {}
-                    _ => (1i32 + (i % 3) as i32).write_options(&mut blob, le, ()).unwrap(),
+                    _ => (1i32 + (i % 3) as i32)
+                        .write_options(&mut blob, le, ())
+                        .unwrap(),
                 }
             }
 
@@ -710,7 +752,9 @@ mod tests {
             }
 
             for i in 0..*ref_count {
-                VarUInt32(ref_len(i)).write_options(&mut blob, le, ()).unwrap();
+                VarUInt32(ref_len(i))
+                    .write_options(&mut blob, le, ())
+                    .unwrap();
             }
         }
 
@@ -736,21 +780,37 @@ mod tests {
         100 + (i % 13) * 7
     }
 
-    fn eager(bytes: &[u8]) -> Clut {
-        Clut::read(Cursor::new(bytes)).unwrap()
+    /// Decode a CLUT the straightforward way: inflate the whole payload and read
+    /// every file's refs in order. This is the reference the windowed decoder is
+    /// checked against.
+    fn reference(bytes: &[u8]) -> (HashSet<String>, Vec<(String, Vec<DataRef>)>) {
+        let (header, payload) = decompress(Cursor::new(bytes)).unwrap();
+        assert!(payload.len() == header.decompressed_size as usize);
+        let mut cursor = Cursor::new(&payload[..]);
+        let (versions, folders, names) = read_strings(&mut cursor).unwrap();
+        let files = names
+            .into_iter()
+            .map(|name| {
+                let refs = FileData::read_with_patches(&mut cursor, &versions).unwrap();
+                (name, refs)
+            })
+            .collect();
+        (folders, files)
     }
 
     #[test]
-    fn matches_eager_parser() {
+    fn matches_the_reference_decode() {
         // One file spans several strides so checkpoint resume is exercised.
         let bytes = synth(&[("a.dat", 0), ("b.dat", 1), ("c.dat", 9000), ("d.dat", 4096)]);
-        let eager = eager(&bytes);
+        let (folders, files) = reference(&bytes);
         let lazy = LazyClut::read(Cursor::new(&bytes)).unwrap();
 
-        assert_eq!(lazy.folders, eager.folders);
-        for (name, expected) in &eager.files {
-            assert_eq!(&lazy.file_refs(name).unwrap(), expected.as_ref(), "{name}");
-            let size = expected.last().map_or(0, |r| r.offset() + u64::from(r.len()));
+        assert_eq!(lazy.folders, folders);
+        for (name, expected) in &files {
+            assert_eq!(&lazy.file_refs(name).unwrap(), expected, "{name}");
+            let size = expected
+                .last()
+                .map_or(0, |r| r.offset() + u64::from(r.len()));
             assert_eq!(lazy.file_size(name), Some(size), "{name}");
             assert_eq!(lazy.index().files.get(name), Some(&size), "{name}");
             assert!(lazy.contains(name));
@@ -759,24 +819,29 @@ mod tests {
         assert!(lazy.file_refs("nope.dat").is_err());
     }
 
-    /// The browse path switched from `Clut::read_index` to `LazyClut::index`, so the
-    /// two must agree on the folder set as well as the sizes.
+    /// Browsing reads sizes straight out of the index, so they must match what a full
+    /// decode reconstructs -- before and after chunking.
     #[test]
-    fn index_matches_read_index() {
-        let spec = &[("a.dat", 0), ("b.dat", 1), ("c.dat", 9000)];
-        let bytes = synth(spec);
+    fn index_matches_the_reference_decode() {
+        let bytes = synth(&[("a.dat", 0), ("b.dat", 1), ("c.dat", 9000)]);
+        let (folders, files) = reference(&bytes);
+        let sizes: HashMap<String, u64> = files
+            .iter()
+            .map(|(name, refs)| {
+                let size = refs.last().map_or(0, |r| r.offset() + u64::from(r.len()));
+                (name.clone(), size)
+            })
+            .collect();
+        assert!(!folders.is_empty(), "fixture has no folders to compare");
+
         let scanned = LazyClut::read(Cursor::new(&bytes)).unwrap();
-        let expected = Clut::read_index(Cursor::new(&bytes)).unwrap();
+        assert_eq!(scanned.index().folders, folders);
+        assert_eq!(scanned.index().files, sizes);
 
-        assert_eq!(scanned.index().folders, expected.folders);
-        assert_eq!(scanned.index().files, expected.files);
-        assert!(!expected.folders.is_empty(), "fixture has no folders to compare");
-
-        // And through a chunked rewrite, where sizes come from the index instead.
         let rewritten = scanned.rewrite(CompressType::Zstd).unwrap();
         let indexed = LazyClut::read(Cursor::new(&rewritten)).unwrap();
-        assert_eq!(indexed.index().folders, expected.folders);
-        assert_eq!(indexed.index().files, expected.files);
+        assert_eq!(indexed.index().folders, folders);
+        assert_eq!(indexed.index().files, sizes);
     }
 
     #[test]
@@ -836,7 +901,11 @@ mod tests {
             let Payload::Chunked { chunks, .. } = &indexed.payload else {
                 panic!("rewrite produced an unchunked payload");
             };
-            assert!(chunks.len() >= 3, "expected several chunks, got {}", chunks.len());
+            assert!(
+                chunks.len() >= 3,
+                "expected several chunks, got {}",
+                chunks.len()
+            );
             assert_ne!(
                 indexed.block("big.dat").unwrap().chunk,
                 indexed.block("small0.dat").unwrap().chunk
@@ -850,18 +919,25 @@ mod tests {
                 );
                 let size = scanned.file_size(name).unwrap();
                 assert_eq!(
-                    indexed.file_refs_range(name, size / 3, size / 3 + 4096).unwrap(),
-                    scanned.file_refs_range(name, size / 3, size / 3 + 4096).unwrap(),
+                    indexed
+                        .file_refs_range(name, size / 3, size / 3 + 4096)
+                        .unwrap(),
+                    scanned
+                        .file_refs_range(name, size / 3, size / 3 + 4096)
+                        .unwrap(),
                     "{compression:?} window for {name}"
                 );
             }
 
-            // The eager reader must reassemble the chunks into the same payload.
-            assert_eq!(eager(&rewritten).files, eager(&bytes).files);
+            // Reassembling the chunks must reproduce the unchunked payload exactly.
+            assert_eq!(reference(&rewritten).1, reference(&bytes).1);
             // And re-chunking an already-chunked CLUT stays consistent.
             let again = indexed.rewrite(compression).unwrap();
             let twice = LazyClut::read(Cursor::new(&again)).unwrap();
-            assert_eq!(twice.file_refs("big.dat").unwrap(), scanned.file_refs("big.dat").unwrap());
+            assert_eq!(
+                twice.file_refs("big.dat").unwrap(),
+                scanned.file_refs("big.dat").unwrap()
+            );
         }
     }
 
