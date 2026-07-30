@@ -1,9 +1,8 @@
 use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
-use xiv_core::file::{
-    clut::Clut, data_ref::DataRef, header::Header, slug::Slug, version::GameVersion,
-};
+use xiv_core::file::{clut_lazy::LazyClut, data_ref::DataRef, slug::Slug, version::GameVersion};
 
+/// What has to change on disk to turn one installed version into another.
 pub struct ClutDiff {
     #[allow(dead_code)]
     pub repository: Slug,
@@ -18,67 +17,88 @@ pub struct ClutDiff {
 
     pub added_folders: HashSet<String>,
     pub added_files: HashMap<String, Vec<DataRef>>,
+    pub file_sizes: HashMap<String, u64>,
+    pub filtered_files: HashSet<String>,
 }
 
 impl ClutDiff {
-    pub fn new(from: &Clut, to: &Clut) -> Result<Self> {
-        if from.header.repository != to.header.repository {
-            bail!(
-                "Cannot diff CLUTs from different repositories: {} vs {}",
-                from.header.repository,
-                to.header.repository
-            );
-        }
-        if from.header.version >= to.header.version {
-            bail!(
-                "Cannot diff CLUTs with from version {} >= to version {}",
-                from.header.version,
-                to.header.version
-            );
+    /// Diff `to` against `from`, or against an empty install when `from` is `None`.
+    pub fn new(
+        from: Option<&LazyClut>,
+        to: &LazyClut,
+        keep: &dyn Fn(&str) -> bool,
+    ) -> Result<Self> {
+        if let Some(from) = from {
+            if from.header.repository != to.header.repository {
+                bail!(
+                    "Cannot diff CLUTs from different repositories: {} vs {}",
+                    from.header.repository,
+                    to.header.repository
+                );
+            }
+            if from.header.version >= to.header.version {
+                bail!(
+                    "Cannot diff CLUTs with from version {} >= to version {}",
+                    from.header.version,
+                    to.header.version
+                );
+            }
         }
 
-        let removed_folders = to.folders.difference(&from.folders).cloned().collect();
-        let removed_files = to
-            .files
-            .keys()
-            .collect::<HashSet<_>>()
-            .difference(&from.files.keys().collect::<HashSet<_>>())
-            .map(|&s| s.clone())
+        let empty = HashSet::new();
+        let from_folders = from.map_or(&empty, |from| &from.folders);
+        let added_folders = to.folders.difference(from_folders).cloned().collect();
+        let removed_folders = from_folders.difference(&to.folders).cloned().collect();
+
+        let removed_files = from
+            .into_iter()
+            .flat_map(LazyClut::files)
+            .filter(|path| !to.contains(path))
+            .map(str::to_string)
             .collect();
-        let added_folders = from.folders.difference(&to.folders).cloned().collect();
 
         let mut added_files = HashMap::new();
-        for (path, data_refs) in &to.files {
-            // If a brand new file is added, add it whole.
-            if !from.files.contains_key(path) {
-                added_files.insert(path.clone(), data_refs.as_ref().clone());
+        let mut file_sizes = HashMap::new();
+        let mut filtered_files = HashSet::new();
+        for path in to.files() {
+            if !keep(path) {
+                filtered_files.insert(path.to_string());
+                continue;
             }
-
-            let new_data: Vec<DataRef> = data_refs
-                .iter()
-                .filter(|d| *d.applied_version() > from.header.patch_version)
-                .cloned()
-                .collect();
-            if !new_data.is_empty() {
-                added_files.insert(path.clone(), new_data);
+            if let Some(size) = to.file_size(path) {
+                file_sizes.insert(path.to_string(), size);
+            }
+            let refs = to.file_refs(path)?;
+            // A file the older install already has only needs what later patches wrote
+            // to it; one it does not have is taken whole.
+            let refs = match from {
+                Some(from) if from.contains(path) => refs
+                    .into_iter()
+                    .filter(|d| *d.applied_version() > from.header.patch_version)
+                    .collect(),
+                _ => refs,
+            };
+            if !refs.is_empty() {
+                added_files.insert(path.to_string(), refs);
             }
         }
 
+        let base_patch_url = match from {
+            Some(from) if !to.header.has_base_patch_url() => &from.header.base_patch_url,
+            _ => &to.header.base_patch_url,
+        };
+
         Ok(Self {
-            repository: from.header.repository,
-            base_patch_url: if to.header.has_base_patch_url() {
-                &to.header.base_patch_url
-            } else {
-                &from.header.base_patch_url
-            }
-            .trim_end_matches('/')
-            .to_string(),
-            version_from: from.header.version.clone(),
+            repository: to.header.repository,
+            base_patch_url: base_patch_url.trim_end_matches('/').to_string(),
+            version_from: from.map_or_else(GameVersion::epoch, |f| f.header.version.clone()),
             version_to: to.header.version.clone(),
             removed_folders,
             removed_files,
             added_folders,
             added_files,
+            file_sizes,
+            filtered_files,
         })
     }
 
@@ -87,37 +107,5 @@ impl ClutDiff {
         if !url.is_empty() {
             self.base_patch_url = url.to_string();
         }
-    }
-
-    pub fn filter_files(&mut self, filter: impl Fn(&str) -> bool) -> HashSet<String> {
-        let mut filtered_out = HashSet::new();
-
-        let mut filter = |path: &String| {
-            if filter(path) {
-                true
-            } else {
-                filtered_out.insert(path.clone());
-                false
-            }
-        };
-
-        self.added_files.retain(|path, _| filter(path));
-        self.removed_files.retain(filter);
-
-        filtered_out
-    }
-}
-
-impl From<Clut> for ClutDiff {
-    fn from(value: Clut) -> Self {
-        let from = Clut {
-            header: Header {
-                repository: value.header.repository,
-                version: GameVersion::epoch(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        Self::new(&from, &value).unwrap()
     }
 }

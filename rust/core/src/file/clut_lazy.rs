@@ -218,6 +218,11 @@ impl LazyClut {
         self.by_name.contains_key(path)
     }
 
+    /// Every file's path, in payload order.
+    pub fn files(&self) -> impl Iterator<Item = &str> {
+        self.files.iter().map(|(name, _)| name.as_str())
+    }
+
     pub fn file_size(&self, path: &str) -> Option<u64> {
         self.block(path).ok().map(|b| b.size)
     }

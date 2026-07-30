@@ -6,6 +6,7 @@ use xiv_core::create_empty_file_block;
 #[async_trait]
 pub trait TargetFile: Send + Sync {
     async fn write_at(&self, data: &[u8], offset: u64) -> Result<()>;
+    async fn truncate(&self, size: u64) -> Result<()>;
 }
 
 /// Main file operations trait - equivalent to C# ZiPatchConfig

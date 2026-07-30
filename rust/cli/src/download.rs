@@ -13,7 +13,7 @@ use std::io::Cursor;
 use std::{path::PathBuf, sync::Arc};
 use url::Url;
 use xiv_core::{
-    file::{clut::Clut, version::GameVersion},
+    file::{clut_lazy::LazyClut, version::GameVersion},
     thaliak::get_repository_metadata,
 };
 
@@ -198,12 +198,16 @@ impl DownloadCommand {
             }
         };
 
-        let mut diff = if let Some(source_clut) = source_clut {
-            ClutDiff::new(&source_clut, &target_clut)
-                .with_context(|| "Failed to create CLUT diff")?
-        } else {
-            ClutDiff::from(target_clut)
+        let regexes = self.regexes.clone();
+        let keep = {
+            let regexes = regexes.clone();
+            move |path: &str| Self::regex_matches(&regexes, path)
         };
+        let mut diff = ClutDiff::new(source_clut.as_ref(), &target_clut, &keep)
+            .with_context(|| "Failed to create CLUT diff")?;
+        let diff_filtered_files = std::mem::take(&mut diff.filtered_files);
+        drop(target_clut);
+        drop(source_clut);
 
         if let Some(patch) = meta.latest_version.patches.first() {
             let mut patch_url = patch.url.parse::<Url>()?;
@@ -213,10 +217,7 @@ impl DownloadCommand {
                 .pop();
             diff.provide_base_patch_url(&patch_url);
         }
-        let diff_filtered_files =
-            diff.filter_files(|path| Self::regex_matches(&self.regexes, path));
 
-        let regexes = self.regexes.clone();
         let patcher = ClutPatcher::new(
             diff,
             FilteredFileOperations::new(
@@ -248,13 +249,13 @@ impl DownloadCommand {
         Ok((target_version, true))
     }
 
-    async fn download_clut(&self, version: &GameVersion) -> Result<Clut> {
+    async fn download_clut(&self, version: &GameVersion) -> Result<LazyClut> {
         let clut_url = format!(
             "{}/{}/{}.clut",
             self.config.clut_path, self.config.slug, version
         );
         let clut_bytes = self.client.get(&clut_url).send().await?.bytes().await?;
-        Clut::read(Cursor::new(clut_bytes))
+        LazyClut::read(Cursor::new(clut_bytes))
             .with_context(|| format!("Failed to read CLUT from {clut_url}"))
     }
 }

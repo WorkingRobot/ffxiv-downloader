@@ -71,6 +71,13 @@ impl<T: FileOperations> TargetFile for FilteredFile<T> {
             None => Ok(()),
         }
     }
+
+    async fn truncate(&self, size: u64) -> Result<()> {
+        match &self.0 {
+            Some(file) => file.truncate(size).await,
+            None => Ok(()),
+        }
+    }
 }
 
 impl<T: FileOperations> FilteredFile<T> {

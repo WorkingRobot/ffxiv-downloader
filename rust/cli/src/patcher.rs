@@ -77,6 +77,12 @@ impl<F: FileOperations> ClutPatcher<F> {
 
         self.process_data_refs().await?;
 
+        // After the references are in place, cut each file to the length the target
+        // version says it has; one that shrank still holds the old version's tail.
+        for (path, size) in &self.diff.file_sizes {
+            self.ops.open_file(path).await?.truncate(*size).await?;
+        }
+
         Ok(())
     }
 

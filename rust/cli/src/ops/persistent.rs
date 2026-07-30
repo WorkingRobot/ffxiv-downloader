@@ -88,6 +88,10 @@ impl TargetFile for PersistentFile {
         self.0.pwrite_all(offset as usize, data).await?;
         Ok(())
     }
+
+    async fn truncate(&self, size: u64) -> Result<()> {
+        self.0.truncate(size as usize)
+    }
 }
 
 impl PersistentFile {
