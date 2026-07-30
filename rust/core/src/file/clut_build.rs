@@ -324,3 +324,139 @@ fn apply_overlay(segments: &mut BTreeMap<u64, DataRef>, new_segment: &DataRef) -
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patch() -> PatchVersion {
+        PatchVersion::new("D2025.01.01.0000.0000").unwrap()
+    }
+
+    /// Raw patch data, so slicing is allowed and the patch offset tracks the trim.
+    fn raw(offset: u64, length: u32) -> DataRef {
+        DataRef::from_raw_patch_data(patch(), 1_000_000 + offset, offset, length)
+    }
+
+    fn extents(segments: &[DataRef]) -> Vec<(u64, u64)> {
+        segments.iter().map(|r| (r.offset(), r.end())).collect()
+    }
+
+    fn try_overlay(intervals: &[DataRef]) -> Result<Vec<DataRef>> {
+        let mut out = BTreeMap::new();
+        for interval in intervals {
+            apply_overlay(&mut out, interval)?;
+        }
+        Ok(out.into_values().collect())
+    }
+
+    fn overlay(intervals: &[DataRef]) -> Vec<DataRef> {
+        try_overlay(intervals).unwrap()
+    }
+
+    #[test]
+    fn later_writes_win_and_leave_no_overlap() {
+        // A middle write splits the first interval in two.
+        let merged = overlay(&[raw(0, 100), raw(40, 20)]);
+        assert_eq!(extents(&merged), [(0, 40), (40, 60), (60, 100)]);
+
+        // The surviving tail must still point at the right patch bytes.
+        assert_eq!(merged[2].patch().unwrap().offset, 1_000_000);
+        assert_eq!(merged[2].patch_offset(), Some(60));
+    }
+
+    #[test]
+    fn a_write_can_swallow_several_intervals() {
+        let merged = overlay(&[raw(0, 10), raw(10, 10), raw(20, 10), raw(5, 20)]);
+        assert_eq!(extents(&merged), [(0, 5), (5, 25), (25, 30)]);
+    }
+
+    #[test]
+    fn overlapping_ends_are_trimmed_on_both_sides() {
+        assert_eq!(
+            extents(&overlay(&[raw(0, 50), raw(100, 50), raw(25, 100)])),
+            [(0, 25), (25, 125), (125, 150)]
+        );
+        // An exact replacement leaves one interval.
+        assert_eq!(extents(&overlay(&[raw(0, 50), raw(0, 50)])), [(0, 50)]);
+    }
+
+    /// An empty-block header describes a whole region, so a write landing inside one
+    /// has no correct answer. Failing loudly beats emitting half a header.
+    #[test]
+    fn slicing_an_empty_block_is_an_error() {
+        let (empty, zero) = DataRef::from_empty(patch(), 0, 1024).unwrap();
+        let err = try_overlay(&[empty.clone(), zero.unwrap(), raw(8, 16)])
+            .expect_err("a write inside an empty block must not be silently accepted");
+        assert!(err.to_string().contains("EmptyBlock"), "{err}");
+
+        // A write that starts exactly where the header ends is fine.
+        assert_eq!(extents(&overlay(&[empty, raw(24, 16)])), [(0, 24), (24, 40)]);
+    }
+
+    #[test]
+    fn intervals_come_out_sorted_and_disjoint() {
+        // Interleaved and repeatedly overlapping writes.
+        let merged = overlay(
+            &[
+                (500u64, 100u32),
+                (0, 200),
+                (150, 400),
+                (600, 50),
+                (100, 25),
+                (0, 1000),
+                (300, 10),
+            ]
+            .map(|(offset, len)| raw(offset, len)),
+        );
+        for pair in merged.windows(2) {
+            assert!(
+                pair[0].end() <= pair[1].offset(),
+                "overlap between {:?} and {:?}",
+                extents(&pair[..1]),
+                extents(&pair[1..])
+            );
+        }
+        assert_eq!(extents(&merged), [(0, 300), (300, 310), (310, 1000)]);
+    }
+
+    #[test]
+    fn removing_an_expansion_keeps_the_filtered_files() {
+        let mut builder = ClutBuilder::new(Header::default());
+        for path in [
+            "sqpack/ex4/0a0000.win32.dat0",
+            "sqpack/ex4/0a0000.win32.index",
+            "movie/ex4/00000.bk2",
+            "movie/ex4/00004.bk2",
+            "sqpack/ex4/somefile.var",
+            "sqpack/ffxiv/0a0000.win32.dat0",
+        ] {
+            builder.files.insert(path.to_string(), Vec::new());
+        }
+        builder
+            .apply(&patch(), &Chunk::SqpkFileDelExpac { expansion_id: 4 })
+            .unwrap();
+
+        let kept: Vec<_> = builder.files.keys().map(String::as_str).collect();
+        assert_eq!(
+            kept,
+            [
+                "movie/ex4/00000.bk2",
+                "sqpack/ex4/somefile.var",
+                "sqpack/ffxiv/0a0000.win32.dat0",
+            ]
+        );
+    }
+
+    /// The same builder state must serialize to the same bytes every time, so a
+    /// regenerated corpus does not churn.
+    #[test]
+    fn payload_is_reproducible() {
+        let mut builder = ClutBuilder::new(Header::default());
+        for (path, offset) in [("b.dat", 0u64), ("a.dat", 100), ("c.dat", 200)] {
+            builder.files.insert(path.to_string(), vec![raw(offset, 50)]);
+            builder.folders.insert(format!("dir/{path}"));
+        }
+        assert_eq!(builder.payload().unwrap(), builder.payload().unwrap());
+    }
+}

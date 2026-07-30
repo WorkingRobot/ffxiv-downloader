@@ -156,3 +156,125 @@ fn inflate(compression: CompressType, src: &[u8]) -> Result<Vec<u8>> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zipatch::{CompressedBlock, FileHeader};
+
+    /// One of every chunk type, so the LUT round trip covers each payload layout.
+    fn chunks() -> Vec<Chunk> {
+        vec![
+            Chunk::FileHeader(FileHeader {
+                version: 3,
+                patch_type: "HIST".to_string(),
+                entry_files: 1,
+                add_directories: 2,
+                delete_directories: 3,
+                delete_data_size: 0x1_0000_0007,
+                minor_version: 5,
+                repository_name: 0xdead_beef,
+                commands: 7,
+                sqpk_add_commands: 8,
+                sqpk_delete_commands: 9,
+                sqpk_expand_commands: 10,
+                sqpk_header_commands: 11,
+                sqpk_file_commands: 12,
+            }),
+            Chunk::ApplyOption { kind: 2, value: true },
+            Chunk::ApplyFreeSpace { unknown_a: 0, unknown_b: 0 },
+            Chunk::AddDirectory("movie/ffxiv".to_string()),
+            Chunk::DeleteDirectory("sqpack/ex5".to_string()),
+            Chunk::Xxxx,
+            Chunk::SqpkAddData {
+                target: "/sqpack/ffxiv/0a0000.%PLACEHOLDER%.dat0".to_string(),
+                block_offset: 128,
+                block_number: 256,
+                block_delete_number: 384,
+                patch_offset: 4096,
+            },
+            Chunk::SqpkDeleteData {
+                target: "/sqpack/ex1/0a0000.%PLACEHOLDER%.dat1".to_string(),
+                block_offset: 512,
+                block_number: 128,
+            },
+            Chunk::SqpkExpandData {
+                target: "/sqpack/ex2/0a0000.%PLACEHOLDER%.dat2".to_string(),
+                block_offset: 640,
+                block_number: 256,
+            },
+            Chunk::SqpkHeader {
+                target: "/sqpack/ffxiv/000000.%PLACEHOLDER%.index".to_string(),
+                header_kind: b'V',
+                patch_offset: 8192,
+            },
+            Chunk::SqpkIndex,
+            Chunk::SqpkPatchInfo { status: 1, version: 3, install_size: 1 << 40 },
+            Chunk::SqpkTargetInfo {
+                platform: 0,
+                region: -1,
+                is_debug: false,
+                version: 2,
+                deleted_data_size: 12345,
+                seek_count: 678,
+            },
+            Chunk::SqpkFileAdd {
+                target: "movie/ffxiv/00000.bk2".to_string(),
+                file_offset: 0,
+                blocks: vec![
+                    // 32000 is the uncompressed sentinel; the second block is deflated.
+                    CompressedBlock { compressed_size: 32000, data_size: 16000, patch_offset: 1024 },
+                    CompressedBlock { compressed_size: 900, data_size: 16000, patch_offset: 17024 },
+                ],
+            },
+            Chunk::SqpkFileDelExpac { expansion_id: 4 },
+            Chunk::SqpkFileDelete {
+                target: "sqpack/ex4/0a0000.%PLACEHOLDER%.dat0".to_string(),
+            },
+            Chunk::SqpkFileMkdir { target: "sqpack/ex5".to_string() },
+            Chunk::EndOfFile,
+        ]
+    }
+
+    #[test]
+    fn every_chunk_type_round_trips_through_a_lut() {
+        for compression in [
+            CompressType::None,
+            CompressType::Zlib,
+            CompressType::Brotli,
+            CompressType::Zstd,
+        ] {
+            let lut = Lut {
+                compression,
+                repository: "4e9a232b".to_string(),
+                version: PatchVersion::new("D2025.11.03.0000.0001").unwrap(),
+                chunks: chunks(),
+            };
+            let back = Lut::read(Cursor::new(lut.write().unwrap())).unwrap();
+
+            assert_eq!(back.compression, compression);
+            assert_eq!(back.repository, lut.repository);
+            assert_eq!(back.version, lut.version);
+            assert_eq!(back.chunks, lut.chunks, "{compression:?}");
+        }
+    }
+
+    /// Names are shared across chunks and referenced by index, so a chunk must resolve
+    /// its own name even when another chunk sorts between its entries.
+    #[test]
+    fn name_indices_survive_sorting() {
+        let lut = Lut {
+            compression: CompressType::None,
+            repository: "4e9a232b".to_string(),
+            version: PatchVersion::epoch(),
+            chunks: vec![
+                Chunk::AddDirectory("zzz".to_string()),
+                Chunk::AddDirectory("aaa".to_string()),
+                Chunk::SqpkFileMkdir { target: "mmm".to_string() },
+                Chunk::AddDirectory("aaa".to_string()),
+            ],
+        };
+        let back = Lut::read(Cursor::new(lut.write().unwrap())).unwrap();
+        assert_eq!(back.chunks, lut.chunks);
+    }
+}
