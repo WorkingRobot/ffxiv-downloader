@@ -26,9 +26,61 @@ pub struct Clut {
     pub files: HashMap<String, Arc<Vec<DataRef>>>,
 }
 
+/// A CLUT parsed for metadata only.
+#[derive(Debug, Default, Clone)]
+pub struct ClutIndex {
+    pub folders: HashSet<String>,
+    pub files: HashMap<String, u64>,
+}
+
 impl Clut {
     /// Read a CLUT file from a binary reader
-    pub fn read<R: Read + std::io::Seek>(mut reader: R) -> anyhow::Result<Self> {
+    pub fn read<R: Read + std::io::Seek>(reader: R) -> anyhow::Result<Self> {
+        let (header, decompressed_data) = Self::decompress(reader)?;
+        let mut cursor = Cursor::new(&decompressed_data);
+        Self::read_decompressed_data(header, &mut cursor)
+    }
+
+    /// Read only the folder set and per-file sizes, without retaining the
+    /// per-file `DataRef` lists.
+    pub fn read_index<R: Read + std::io::Seek>(reader: R) -> anyhow::Result<ClutIndex> {
+        use binrw::Endian;
+
+        let (_header, decompressed_data) = Self::decompress(reader)?;
+        let mut reader = Cursor::new(&decompressed_data);
+
+        let patch_len = i32::read_options(&mut reader, Endian::Little, ())?;
+        let mut patch_versions = Vec::with_capacity(patch_len as usize);
+        for _ in 0..patch_len {
+            let patch_str = NetString::read_options(&mut reader, Endian::Little, ())?.0;
+            patch_versions.push(PatchVersion::new(&patch_str)?);
+        }
+
+        let folder_len = i32::read_options(&mut reader, Endian::Little, ())?;
+        let mut folders = HashSet::with_capacity(folder_len as usize);
+        for _ in 0..folder_len {
+            folders.insert(NetString::read_options(&mut reader, Endian::Little, ())?.0);
+        }
+
+        let file_len = i32::read_options(&mut reader, Endian::Little, ())?;
+        let mut file_names = Vec::with_capacity(file_len as usize);
+        for _ in 0..file_len {
+            file_names.push(NetString::read_options(&mut reader, Endian::Little, ())?.0);
+        }
+
+        let mut files = HashMap::with_capacity(file_len as usize);
+        for file_name in file_names {
+            // The per-file refs are read and dropped immediately; only the
+            // reconstructed length (last ref's end offset) is kept.
+            let refs = FileData::read_with_patches(&mut reader, &patch_versions)?;
+            let size = refs.last().map_or(0, |r| r.offset() + r.len() as u64);
+            files.insert(file_name, size);
+        }
+
+        Ok(ClutIndex { folders, files })
+    }
+
+    fn decompress<R: Read + std::io::Seek>(mut reader: R) -> anyhow::Result<(Header, Vec<u8>)> {
         // Read header
         let header = Header::read_options(&mut reader, binrw::Endian::Little, ())?;
 
@@ -70,9 +122,7 @@ impl Clut {
             }
         };
 
-        // Parse decompressed data
-        let mut cursor = Cursor::new(&decompressed_data);
-        Self::read_decompressed_data(header, &mut cursor)
+        Ok((header, decompressed_data))
     }
 
     /// Read the decompressed data portion of a CLUT file
