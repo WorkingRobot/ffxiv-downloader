@@ -1,5 +1,6 @@
 use crate::file::utils::VarUInt32;
 
+use super::file_data::PatchIndex;
 use super::patch_ref::PatchRef;
 use super::version::PatchVersion;
 
@@ -110,7 +111,163 @@ impl DataRef {
             _ => None,
         }
     }
+
+    /// One past the last byte this reference covers.
+    pub fn end(&self) -> u64 {
+        self.offset + u64::from(self.length)
+    }
+
+    /// Data copied straight out of a patch file.
+    pub fn from_raw_patch_data(
+        version: PatchVersion,
+        patch_offset: u64,
+        file_offset: u64,
+        length: u32,
+    ) -> Self {
+        Self::with_patch(
+            version,
+            file_offset,
+            length,
+            PatchRef {
+                offset: patch_offset,
+                size: length,
+                is_compressed: false,
+            },
+            0,
+        )
+    }
+
+    /// Deflated data in a patch file, which expands to `length` bytes.
+    pub fn from_compressed_patch_data(
+        version: PatchVersion,
+        patch_offset: u64,
+        file_offset: u64,
+        compressed_length: u32,
+        length: u32,
+    ) -> Self {
+        Self::with_patch(
+            version,
+            file_offset,
+            length,
+            PatchRef {
+                offset: patch_offset,
+                size: compressed_length,
+                is_compressed: true,
+            },
+            0,
+        )
+    }
+
+    /// A slice of patch data starting `patch_offset` bytes into the (expanded) block.
+    pub fn from_split_patch_data(
+        version: PatchVersion,
+        patch: PatchRef,
+        file_offset: u64,
+        patch_offset: u32,
+        length: u32,
+    ) -> Self {
+        Self::with_patch(version, file_offset, length, patch, patch_offset)
+    }
+
+    fn with_patch(
+        version: PatchVersion,
+        file_offset: u64,
+        length: u32,
+        patch: PatchRef,
+        patch_offset: u32,
+    ) -> Self {
+        Self {
+            applied_version: version,
+            offset: file_offset,
+            length,
+            ref_type: DataRefType::Patch {
+                patch,
+                // A zero offset is the `FullPatch` encoding, which reads back as
+                // absent; storing it that way keeps a written-then-read ref equal to
+                // the one that was written.
+                patch_offset: (patch_offset != 0).then_some(patch_offset),
+            },
+        }
+    }
+
+    /// A run of zeroes.
+    pub fn from_zeros(version: PatchVersion, file_offset: u64, length: u32) -> Self {
+        Self {
+            applied_version: version,
+            offset: file_offset,
+            length,
+            ref_type: DataRefType::Zero {},
+        }
+    }
+
+    /// An sqpack empty-block header, plus the zero fill that follows it. The header is
+    /// always 24 bytes, even when it covers no blocks.
+    pub fn from_empty(
+        version: PatchVersion,
+        file_offset: u64,
+        length: u32,
+    ) -> anyhow::Result<(Self, Option<Self>)> {
+        anyhow::ensure!(
+            length & 0x7F == 0,
+            "Length must be a multiple of 128, got {length}"
+        );
+        let empty = Self {
+            applied_version: version.clone(),
+            offset: file_offset,
+            length: EMPTY_BLOCK_HEADER,
+            ref_type: DataRefType::EmptyBlock {
+                block_count: (length >> 7) as i32,
+            },
+        };
+        let zero = (length != 0).then(|| {
+            Self::from_zeros(
+                version,
+                file_offset + u64::from(EMPTY_BLOCK_HEADER),
+                length - EMPTY_BLOCK_HEADER,
+            )
+        });
+        Ok((empty, zero))
+    }
+
+    /// The part of this reference covering `[start, end)`.
+    pub fn slice_interval(&self, start: u64, end: u64) -> anyhow::Result<Self> {
+        self.slice(start, u32::try_from(end - start)?)
+    }
+
+    /// The part of this reference covering `length` bytes from `file_offset`.
+    pub fn slice(&self, file_offset: u64, length: u32) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            file_offset >= self.offset && file_offset + u64::from(length) <= self.end(),
+            "Slice bounds ({file_offset}-{}) are outside source bounds ({}-{})",
+            file_offset + u64::from(length),
+            self.offset,
+            self.end()
+        );
+
+        match &self.ref_type {
+            DataRefType::Zero {} => Ok(Self::from_zeros(
+                self.applied_version.clone(),
+                file_offset,
+                length,
+            )),
+            // An empty-block header describes a whole region; half of one means nothing.
+            DataRefType::EmptyBlock { .. } => anyhow::bail!("Cannot slice an EmptyBlock"),
+            DataRefType::Patch {
+                patch,
+                patch_offset,
+            } => Ok(Self::from_split_patch_data(
+                self.applied_version.clone(),
+                patch.clone(),
+                file_offset,
+                u32::try_from(file_offset - self.offset)? + patch_offset.unwrap_or(0),
+                length,
+            )),
+        }
+    }
 }
+
+/// An sqpack empty-block header is a fixed 24 bytes.
+const EMPTY_BLOCK_HEADER: u32 = 24;
 
 impl BinRead for DataRef {
     type Args<'a> = (&'a mut u64, &'a [PatchVersion]); // patch_offset tracker, patch versions
@@ -180,13 +337,13 @@ impl BinRead for DataRef {
 }
 
 impl BinWrite for DataRef {
-    type Args<'a> = (&'a mut u64, &'a [PatchVersion]); // patch_offset tracker
+    type Args<'a> = (&'a mut u64, &'a PatchIndex<'a>); // patch_offset tracker, version table
 
     fn write_options<W: std::io::Write + std::io::Seek>(
         &self,
         writer: &mut W,
         endian: binrw::Endian,
-        (patch_offset_tracker, patch_versions): Self::Args<'_>,
+        (patch_offset_tracker, patches): Self::Args<'_>,
     ) -> binrw::BinResult<()> {
         let type_to_write = match self.ref_type {
             DataRefType::Patch { patch_offset, .. } => {
@@ -201,13 +358,12 @@ impl BinWrite for DataRef {
         };
         type_to_write.write_options(writer, endian, ())?;
 
-        let version_index = patch_versions
-            .iter()
-            .position(|v| v == &self.applied_version)
-            .ok_or_else(|| binrw::Error::Custom {
+        let version_index = patches.get(&self.applied_version).ok_or_else(|| {
+            binrw::Error::Custom {
                 pos: 0,
                 err: Box::new("Patch version not found in versions list".to_string()),
-            })? as i32;
+            }
+        })?;
 
         VarInt32(version_index).write_options(writer, endian, ())?;
         match &self.ref_type {

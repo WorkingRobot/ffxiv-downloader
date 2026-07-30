@@ -1,7 +1,10 @@
 pub mod clut;
+pub mod clut_build;
+pub mod clut_lazy;
 pub mod data_ref;
 pub mod file_data;
 pub mod header;
+pub mod lut;
 pub mod patch_ref;
 pub mod slug;
 pub mod types;

@@ -1,9 +1,11 @@
 use crate::file::{data_ref::DataRef, version::PatchVersion};
 
+use super::clut_lazy::{ChunkSpan, Index};
 use super::file_data::FileData;
 use super::header::Header;
-use super::types::CompressType;
+use super::types::{CompressType, Version};
 use super::utils::NetString;
+use anyhow::{Context, ensure};
 use binrw::BinRead;
 use brotli::Decompressor;
 use flate2::read::ZlibDecoder;
@@ -12,6 +14,60 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+
+/// Decompress one chunk (or a whole single-stream payload) to its known length.
+pub(crate) fn decompress_chunk(
+    compression: CompressType,
+    src: &[u8],
+    expected: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let out = match compression {
+        CompressType::None => src.to_vec(),
+        CompressType::Zlib => {
+            let mut out = Vec::with_capacity(expected);
+            ZlibDecoder::new(src).read_to_end(&mut out)?;
+            out
+        }
+        CompressType::Brotli => {
+            let mut out = Vec::with_capacity(expected);
+            Decompressor::new(src, 8192).read_to_end(&mut out)?;
+            out
+        }
+        CompressType::Zstd => zstd::bulk::decompress(src, expected)?,
+    };
+
+    ensure!(
+        out.len() == expected,
+        "{compression:?} decompressed size mismatch: expected {expected}, got {}",
+        out.len()
+    );
+    Ok(out)
+}
+
+/// Compress one chunk with the given codec.
+pub(crate) fn compress_chunk(compression: CompressType, src: &[u8]) -> anyhow::Result<Vec<u8>> {
+    Ok(match compression {
+        CompressType::None => src.to_vec(),
+        CompressType::Zlib => {
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+            std::io::Write::write_all(&mut encoder, src)?;
+            encoder.finish()?
+        }
+        CompressType::Brotli => {
+            let mut out = Vec::new();
+            let params = brotli::enc::BrotliEncoderParams {
+                quality: 11,
+                ..Default::default()
+            };
+            brotli::BrotliCompress(&mut Cursor::new(src), &mut out, &params)?;
+            out
+        }
+        CompressType::Zstd => zstd::bulk::compress(src, ZSTD_LEVEL)?,
+    })
+}
+
+const ZSTD_LEVEL: i32 = 19;
 
 /// Complete CLUT file structure containing header, folders, and file data
 #[derive(Debug, Default, Clone)]
@@ -44,31 +100,12 @@ impl Clut {
     /// Read only the folder set and per-file sizes, without retaining the
     /// per-file `DataRef` lists.
     pub fn read_index<R: Read + std::io::Seek>(reader: R) -> anyhow::Result<ClutIndex> {
-        use binrw::Endian;
-
         let (_header, decompressed_data) = Self::decompress(reader)?;
         let mut reader = Cursor::new(&decompressed_data);
 
-        let patch_len = i32::read_options(&mut reader, Endian::Little, ())?;
-        let mut patch_versions = Vec::with_capacity(patch_len as usize);
-        for _ in 0..patch_len {
-            let patch_str = NetString::read_options(&mut reader, Endian::Little, ())?.0;
-            patch_versions.push(PatchVersion::new(&patch_str)?);
-        }
+        let (patch_versions, folders, file_names) = Self::read_strings(&mut reader)?;
 
-        let folder_len = i32::read_options(&mut reader, Endian::Little, ())?;
-        let mut folders = HashSet::with_capacity(folder_len as usize);
-        for _ in 0..folder_len {
-            folders.insert(NetString::read_options(&mut reader, Endian::Little, ())?.0);
-        }
-
-        let file_len = i32::read_options(&mut reader, Endian::Little, ())?;
-        let mut file_names = Vec::with_capacity(file_len as usize);
-        for _ in 0..file_len {
-            file_names.push(NetString::read_options(&mut reader, Endian::Little, ())?.0);
-        }
-
-        let mut files = HashMap::with_capacity(file_len as usize);
+        let mut files = HashMap::with_capacity(file_names.len());
         for file_name in file_names {
             // The per-file refs are read and dropped immediately; only the
             // reconstructed length (last ref's end offset) is kept.
@@ -80,49 +117,90 @@ impl Clut {
         Ok(ClutIndex { folders, files })
     }
 
-    fn decompress<R: Read + std::io::Seek>(mut reader: R) -> anyhow::Result<(Header, Vec<u8>)> {
+    /// Read the patch version, folder and file name sections that precede the
+    /// per-file data in the decompressed payload.
+    pub(crate) fn read_strings<R: Read + std::io::Seek>(
+        reader: &mut R,
+    ) -> anyhow::Result<(Vec<PatchVersion>, HashSet<String>, Vec<String>)> {
+        use binrw::Endian;
+
+        let patch_len = i32::read_options(reader, Endian::Little, ())?;
+        let mut patch_versions = Vec::with_capacity(patch_len as usize);
+        for _ in 0..patch_len {
+            let patch_str = NetString::read_options(reader, Endian::Little, ())?.0;
+            patch_versions.push(PatchVersion::new(&patch_str)?);
+        }
+
+        let folder_len = i32::read_options(reader, Endian::Little, ())?;
+        let mut folders = HashSet::with_capacity(folder_len as usize);
+        for _ in 0..folder_len {
+            folders.insert(NetString::read_options(reader, Endian::Little, ())?.0);
+        }
+
+        let file_len = i32::read_options(reader, Endian::Little, ())?;
+        let mut file_names = Vec::with_capacity(file_len as usize);
+        for _ in 0..file_len {
+            file_names.push(NetString::read_options(reader, Endian::Little, ())?.0);
+        }
+
+        Ok((patch_versions, folders, file_names))
+    }
+
+    /// The header and the payload behind it, with a chunked payload reassembled into
+    /// the single stream an unchunked one holds.
+    pub fn decompress<R: Read + std::io::Seek>(
+        mut reader: R,
+    ) -> anyhow::Result<(Header, Vec<u8>)> {
         // Read header
         let header = Header::read_options(&mut reader, binrw::Endian::Little, ())?;
 
-        // Read compressed data
-        let compressed_size = header.get_compressed_size();
-        let mut compressed_data = vec![0u8; compressed_size as usize];
+        // A v3 payload is split into independently compressed chunks, so the eager
+        // reader needs the chunk table to reassemble it. The rest of the index only
+        // matters to readers decoding one file at a time.
+        let chunks = (header.file_version == Version::Indexed)
+            .then(|| Index::read(&mut reader).map(|index| index.chunks))
+            .transpose()?;
+
+        let decompressed_data = Self::decompress_payload(&header, chunks.as_deref(), &mut reader)?;
+        Ok((header, decompressed_data))
+    }
+
+    /// Decompress the payload following the header (and, for v3, the index). With a
+    /// chunk table the chunks are decompressed and concatenated.
+    pub(crate) fn decompress_payload<R: Read + std::io::Seek>(
+        header: &Header,
+        chunks: Option<&[ChunkSpan]>,
+        reader: &mut R,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut compressed_data = vec![0u8; header.get_compressed_size() as usize];
         reader.read_exact(&mut compressed_data)?;
 
-        // Decompress data if needed
-        let decompressed_data = match header.compression {
-            CompressType::None => compressed_data,
-            CompressType::Zlib => {
-                let mut decoder = ZlibDecoder::new(&compressed_data[..]);
-                let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed)?;
-
-                if decompressed.len() != header.decompressed_size as usize {
-                    return Err(anyhow::anyhow!(
-                        "Decompressed size mismatch: expected {}, got {}",
-                        header.decompressed_size,
-                        decompressed.len()
-                    ));
-                }
-                decompressed
-            }
-            CompressType::Brotli => {
-                let mut decompressed = Vec::new();
-                let mut decoder = Decompressor::new(&compressed_data[..], 8192);
-                decoder.read_to_end(&mut decompressed)?;
-
-                if decompressed.len() != header.decompressed_size as usize {
-                    return Err(anyhow::anyhow!(
-                        "Brotli decompressed size mismatch: expected {}, got {}",
-                        header.decompressed_size,
-                        decompressed.len()
-                    ));
-                }
-                decompressed
-            }
+        let Some(chunks) = chunks else {
+            return decompress_chunk(
+                header.compression,
+                &compressed_data,
+                header.decompressed_size as usize,
+            );
         };
 
-        Ok((header, decompressed_data))
+        let mut out = Vec::with_capacity(header.decompressed_size as usize);
+        for chunk in chunks {
+            let src = compressed_data
+                .get(chunk.compressed_range())
+                .context("CLUT chunk runs past the payload")?;
+            out.extend_from_slice(&decompress_chunk(
+                header.compression,
+                src,
+                chunk.decompressed_len as usize,
+            )?);
+        }
+        ensure!(
+            out.len() == header.decompressed_size as usize,
+            "CLUT chunks decompress to {}, header says {}",
+            out.len(),
+            header.decompressed_size
+        );
+        Ok(out)
     }
 
     /// Read the decompressed data portion of a CLUT file

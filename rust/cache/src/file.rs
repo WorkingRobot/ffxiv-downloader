@@ -14,7 +14,7 @@ use futures::{
 use itertools::Itertools;
 use xiv_core::{
     create_empty_file_block,
-    file::{data_ref::DataRef, slug::Slug, version::GameVersion},
+    file::{clut_lazy::LazyClut, data_ref::DataRef, slug::Slug, version::GameVersion},
 };
 
 use crate::{server::Server, stream::CacheFileStream, weakling::Weakling};
@@ -99,7 +99,7 @@ pub struct CacheFile {
     version: GameVersion,
     file_name: String,
     length: u64,
-    file_data: Weakling<Vec<DataRef>>,
+    clut: Weakling<LazyClut>,
 }
 
 impl CacheFile {
@@ -109,13 +109,10 @@ impl CacheFile {
         version: GameVersion,
         file_name: String,
     ) -> std::io::Result<Self> {
-        let file_data = Self::fetch_file_data(&server, slug, version.clone(), &file_name).await?;
-
-        if !file_data.is_sorted_by_key(|f| f.offset()) {
-            return Err(std::io::Error::other("File data is not sorted by offset"));
-        }
-
-        let length = file_data.last().map_or(0, |f| f.offset() + f.len() as u64);
+        let clut = Self::fetch_clut(&server, slug, version.clone()).await?;
+        let length = clut.file_size(&file_name).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")
+        })?;
 
         Ok(Self {
             server,
@@ -123,25 +120,19 @@ impl CacheFile {
             version,
             file_name,
             length,
-            file_data: Arc::downgrade(&file_data).into(),
+            clut: Arc::downgrade(&clut).into(),
         })
     }
 
-    async fn fetch_file_data(
+    async fn fetch_clut(
         server: &Server,
         slug: Slug,
         version: GameVersion,
-        file_path: &String,
-    ) -> std::io::Result<Arc<Vec<DataRef>>> {
-        let clut = server
+    ) -> std::io::Result<Arc<LazyClut>> {
+        server
             .get_clut(slug, version)
             .await
-            .map_err(std::io::Error::other)?;
-        let file_data =
-            clut.files.get(file_path).cloned().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")
-            })?;
-        Ok(file_data)
+            .map_err(std::io::Error::other)
     }
 
     pub async fn exists(
@@ -151,20 +142,15 @@ impl CacheFile {
         file_path: String,
     ) -> Result<bool> {
         let clut = server.get_clut(slug, version).await?;
-        Ok(clut.files.contains_key(&file_path))
+        Ok(clut.contains(&file_path))
     }
 
-    pub async fn file_data(&self) -> Arc<Vec<DataRef>> {
-        self.file_data
+    async fn clut(&self) -> Arc<LazyClut> {
+        self.clut
             .fetch(async || {
-                Self::fetch_file_data(
-                    &self.server,
-                    self.slug,
-                    self.version.clone(),
-                    &self.file_name,
-                )
-                .await
-                .expect("Failed to fetch file data")
+                Self::fetch_clut(&self.server, self.slug, self.version.clone())
+                    .await
+                    .expect("Failed to fetch CLUT")
             })
             .await
     }
@@ -181,45 +167,31 @@ impl CacheFile {
         CacheFileStream::new(self)
     }
 
-    async fn find_data_ref_idx(&self, offset: u64) -> Option<usize> {
-        let file_data = self.file_data().await;
-        let result = file_data.binary_search_by_key(&offset, |r| r.offset());
-        match result {
-            Ok(idx) => Some(idx),
-            Err(idx)
-                if idx > 0
-                    && file_data
-                        .get(idx - 1)
-                        .map(|i| (i.offset() + i.len() as u64) > offset)
-                        .unwrap_or_default() =>
-            {
-                Some(idx - 1)
-            }
-            _ => None,
-        }
-    }
-
-    async fn find_data_ref_range(&self, offset: u64, len: u64) -> Option<(usize, usize)> {
-        let start_idx = self.find_data_ref_idx(offset).await?;
-        let end_idx = self.find_data_ref_idx(offset + len - 1).await?;
-        if start_idx <= end_idx {
-            Some((start_idx, end_idx + 1)) // end_idx is inclusive
-        } else {
-            None
-        }
-    }
-
     pub async fn pread(&self, offset: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
         let mut buffer = OffsetBuffer::new(offset, buffer);
 
-        let (ref_start, ref_end) = self
-            .find_data_ref_range(buffer.offset(), buffer.len() as u64)
-            .await
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid offset or length")
-            })?;
+        // Only the refs overlapping this window are decoded; a whole base-game
+        // .dat file is 460k refs, of which an 8 MiB read needs ~400.
+        let end = buffer.offset() + buffer.len() as u64;
+        let clut = self.clut().await;
+        let refs = clut
+            .file_refs_range(&self.file_name, buffer.offset(), end)
+            .map_err(std::io::Error::other)?;
 
-        let refs = &self.file_data().await[ref_start..ref_end];
+        let covers = |r: &DataRef, pos: u64| r.offset() <= pos && r.offset() + r.len() as u64 > pos;
+        if !refs.first().is_some_and(|r| covers(r, buffer.offset()))
+            || !refs.last().is_some_and(|r| covers(r, end - 1))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid offset or length",
+            ));
+        }
+
+        let refs = refs.as_slice();
         let mut patch_refs = HashMap::new();
         for data_ref in refs {
             if let Some(patch_ref) = data_ref.patch() {

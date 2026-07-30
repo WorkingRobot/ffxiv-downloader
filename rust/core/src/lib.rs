@@ -3,6 +3,7 @@ use std::io::{Cursor, Write};
 pub mod downloader;
 pub mod file;
 pub mod thaliak;
+pub mod zipatch;
 
 pub fn create_empty_file_block(block_count: i64) -> Vec<u8> {
     let mut ret = vec![0; 24];

@@ -8,6 +8,7 @@ pub enum CompressType {
     None = 0,
     Zlib = 1,
     Brotli = 2,
+    Zstd = 3,
 }
 
 /// CLUT file version
@@ -17,6 +18,7 @@ pub enum CompressType {
 pub enum Version {
     Initial = 1,
     SeparateVersioning = 2,
+    Indexed = 3,
 }
 
 /// Platform ID for FFXIV installations
@@ -67,7 +69,7 @@ impl binrw::BinWrite for PlatformId {
         endian: binrw::Endian,
         _args: Self::Args<'_>,
     ) -> binrw::BinResult<()> {
-        let value = match self {
+        let value: u8 = match self {
             PlatformId::Win32 => 0,
             PlatformId::Ps3 => 1,
             PlatformId::Ps4 => 2,

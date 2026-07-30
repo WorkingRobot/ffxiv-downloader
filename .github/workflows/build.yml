@@ -3,7 +3,7 @@ on: push
 
 jobs:
   build:
-    name: Build ${{matrix.platform.os-name}} (${{matrix.type.name}})
+    name: Build ${{matrix.os-name}}
     permissions:
       contents: read
       id-token: write
@@ -11,50 +11,34 @@ jobs:
 
     strategy:
       matrix:
-        type:
-          - id: dotnet
-            name: .NET
-            artifact-name: FFXIVDownloader.Command
-          - id: rust
-            name: Rust
-            artifact-name: xiv-dl
-
-        platform:
+        include:
           - os-name: linux-x64
             runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            rid: linux-x64
 
           - os-name: linux-arm64
             runs-on: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            rid: linux-arm64
 
           - os-name: win-x64
             runs-on: windows-latest
-            rid: win-x64
             target: x86_64-pc-windows-msvc
             binary-ext: .exe
 
           - os-name: win-arm64
             runs-on: windows-11-arm
-            rid: win-arm64
             target: aarch64-pc-windows-msvc
             binary-ext: .exe
 
           - os-name: osx-x64
             runs-on: macOS-latest
-            rid: osx-x64
             target: x86_64-apple-darwin
 
           - os-name: osx-arm64
             runs-on: macOS-latest
-            rid: osx-arm64
             target: aarch64-apple-darwin
 
-    runs-on: ${{ matrix.platform.runs-on }}
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    runs-on: ${{ matrix.runs-on }}
 
     steps:
       - name: Checkout
@@ -62,49 +46,31 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup .NET
-        if: matrix.type.id == 'dotnet'
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: "10.0"
-
-      - name: Build (.NET)
-        if: matrix.type.id == 'dotnet'
-        run: dotnet publish -c Release -r ${{matrix.platform.rid}} -o build -p:ContinuousIntegrationBuild=true dotnet/FFXIVDownloader.Command
-
-      - name: Build (Rust)
-        if: matrix.type.id == 'rust'
+      - name: Build
         uses: houseabsolute/actions-rust-cross@v1
         with:
-          target: ${{ matrix.platform.target }}
+          target: ${{ matrix.target }}
           working-directory: rust
           args: "--locked --release --bin xiv-dl"
           strip: true
 
-      - name: Rename Binary (.NET)
-        if: matrix.type.id == 'dotnet'
+      - name: Rename Binary
         shell: bash
         run: |
-          mv -f build/FFXIVDownloader.Command${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-
-      - name: Rename Binary (Rust)
-        if: matrix.type.id == 'rust'
-        shell: bash
-        run: |
-          mv -f rust/target/${{ matrix.platform.target }}/release/xiv-dl${{ matrix.platform.binary-ext }} ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+          mv -f rust/target/${{ matrix.target }}/release/xiv-dl${{ matrix.binary-ext }} xiv-dl-${{ matrix.os-name }}${{ matrix.binary-ext }}
 
       - name: Attest
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
-            ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+            xiv-dl-${{ matrix.os-name }}${{ matrix.binary-ext }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}
+          name: xiv-dl-${{ matrix.os-name }}
           path: |
-            ${{ matrix.type.artifact-name }}-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+            xiv-dl-${{ matrix.os-name }}${{ matrix.binary-ext }}
           if-no-files-found: error
 
   release:

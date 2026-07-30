@@ -1,14 +1,7 @@
-.vs/
-obj/
-bin/
-build/
-*.user
+target/
 
 *.patch
 *.clut
 *.lut
 cluts/
 luts/
-test_fix.sh
-
-target/

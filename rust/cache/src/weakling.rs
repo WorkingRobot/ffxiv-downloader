@@ -2,8 +2,15 @@ use std::sync::{Arc, Weak};
 
 use tokio::sync::Mutex;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Weakling<T>(Arc<Mutex<Weak<T>>>);
+
+// Derived `Clone` would demand `T: Clone`; cloning the handle never touches `T`.
+impl<T> Clone for Weakling<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl<T> Weakling<T> {
     pub fn new(data: Arc<T>) -> Self {

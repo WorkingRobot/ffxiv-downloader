@@ -1,11 +1,15 @@
 mod cache;
+mod clut;
 mod diff;
 mod download;
+mod lut;
 mod ops;
 mod patcher;
+mod resource;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;
+use std::sync::Arc;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -13,8 +17,10 @@ use std::{
 };
 use std::{io::Cursor, path::PathBuf};
 use xiv_core::file::clut::Clut;
+use xiv_core::file::types::CompressType;
 
 use crate::download::{DownloadCommand, DownloadConfigArgs};
+use crate::resource::Fetcher;
 
 shadow!(build);
 
@@ -29,6 +35,18 @@ struct Cli {
     /// Is this a CI run?
     #[arg(long, hide = true, default_value_t = false)]
     gha: bool,
+
+    /// Enable verbose logging.
+    #[arg(long, global = true)]
+    verbose: bool,
+
+    /// Enable debug logging. Implies verbose logging.
+    #[arg(long, global = true)]
+    debug: bool,
+
+    /// Directory to read patch, LUT and CLUT files from instead of downloading them.
+    #[arg(long, global = true, value_name = "DIR")]
+    patch_override_path: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -44,6 +62,51 @@ enum Commands {
         #[command(flatten)]
         config_args: DownloadConfigArgs,
     },
+    /// Build a LUT for each patch in a repository's chain
+    Lut(lut::LutArgs),
+    /// Fold a chain of LUTs into a CLUT per game version
+    Clut(clut::ClutArgs),
+    /// Print a repository's version graph in the DOT language
+    Graphviz {
+        /// Repository slug to graph
+        #[arg(short, long, value_name = "SLUG")]
+        slug: String,
+        /// Check that every patch is actually downloadable
+        #[arg(long)]
+        verify_existence: bool,
+        /// Only show versions that are still offered
+        #[arg(long, value_name = "BOOL", default_value_t = true, num_args = 0..=1)]
+        active: bool,
+    },
+}
+
+/// Compression for a LUT or CLUT payload. Named as the C# implementation named them,
+/// since existing invocations pass `-c Brotli`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "PascalCase")]
+enum Compression {
+    None,
+    Zlib,
+    Brotli,
+    /// Smaller and much faster to decode, but only defined for CLUT version 3.
+    Zstd,
+}
+
+impl From<Compression> for CompressType {
+    fn from(value: Compression) -> Self {
+        match value {
+            Compression::None => CompressType::None,
+            Compression::Zlib => CompressType::Zlib,
+            Compression::Brotli => CompressType::Brotli,
+            Compression::Zstd => CompressType::Zstd,
+        }
+    }
+}
+
+impl std::fmt::Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 fn find_clut_files<P: AsRef<Path>>(dir: P) -> std::io::Result<Vec<PathBuf>> {
@@ -77,16 +140,19 @@ fn test_clut_file<P: AsRef<Path>>(file_path: P) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(
-        if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "info"
-        },
-    ))
-    .init();
-
     let cli = Cli::parse();
+
+    let level = if cli.debug {
+        "trace"
+    } else if cli.verbose || cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "info"
+    };
+    env_logger::Builder::from_env(env_logger::Env::new().default_filter_or(level)).init();
+    if cli.gha {
+        log::info!("Running in CI/CD mode. o/");
+    }
 
     match cli.command {
         Commands::TestClut { directory } => test_clut_files(&directory),
@@ -103,7 +169,36 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Commands::Lut(args) => {
+            let fetcher = Arc::new(Fetcher::new(cli.patch_override_path)?);
+            lut::run(args, fetcher, &thaliak_client()?).await
+        }
+        Commands::Clut(args) => {
+            let fetcher = Arc::new(Fetcher::new(cli.patch_override_path)?);
+            clut::run(args, fetcher, &thaliak_client()?).await
+        }
+        Commands::Graphviz {
+            slug,
+            verify_existence,
+            active,
+        } => {
+            let tree = xiv_core::thaliak::graphviz::get_graphviz_tree(
+                &thaliak_client()?,
+                &slug,
+                verify_existence,
+                active,
+            )
+            .await?;
+            print!("{tree}");
+            Ok(())
+        }
     }
+}
+
+fn thaliak_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
+        .build()?)
 }
 
 fn test_clut_files(directory: &str) -> anyhow::Result<()> {

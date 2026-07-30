@@ -1,9 +1,31 @@
+use std::collections::HashMap;
+
 use crate::file::utils::VarUInt32;
 
 use super::data_ref::DataRef;
 use super::utils::VarInt64;
 use super::version::PatchVersion;
 use binrw::{BinRead, BinWrite};
+
+/// Each ref names its patch by index into the CLUT's version table. Built once per
+/// write, since a linear scan per ref costs millions of comparisons on a real CLUT.
+pub struct PatchIndex<'a>(HashMap<&'a PatchVersion, i32>);
+
+impl<'a> PatchIndex<'a> {
+    pub fn new(versions: &'a [PatchVersion]) -> Self {
+        Self(
+            versions
+                .iter()
+                .enumerate()
+                .map(|(i, version)| (version, i as i32))
+                .collect(),
+        )
+    }
+
+    pub fn get(&self, version: &PatchVersion) -> Option<i32> {
+        self.0.get(version).copied()
+    }
+}
 
 /// File data within a CLUT, containing references to data blocks
 pub struct FileData;
@@ -62,7 +84,7 @@ impl FileData {
     pub fn write_with_patches<W: std::io::Write + std::io::Seek>(
         this: &[DataRef],
         writer: &mut W,
-        patch_versions: &[PatchVersion],
+        patches: &PatchIndex<'_>,
     ) -> binrw::BinResult<()> {
         use binrw::Endian;
 
@@ -75,7 +97,7 @@ impl FileData {
             data_ref.write_options(
                 writer,
                 Endian::Little,
-                (&mut patch_offset_tracker, patch_versions),
+                (&mut patch_offset_tracker, patches),
             )?;
         }
 

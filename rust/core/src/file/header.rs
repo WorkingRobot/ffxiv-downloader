@@ -91,7 +91,10 @@ impl BinRead for Header {
         }
 
         let file_version = Version::read_options(reader, endian, ())?;
-        if file_version != Version::SeparateVersioning {
+        if !matches!(
+            file_version,
+            Version::SeparateVersioning | Version::Indexed
+        ) {
             return Err(binrw::Error::Custom {
                 pos: 0,
                 err: Box::new(format!("Unsupported version: {file_version:?}")),

@@ -3194,6 +3194,7 @@ dependencies = [
  "serde_json",
  "shadow-rs",
  "tokio",
+ "tokio-util",
  "url",
  "windows",
  "xiv-dl-core",
@@ -3207,6 +3208,7 @@ dependencies = [
  "binrw",
  "brotli",
  "bytes",
+ "crc32fast",
  "flate2",
  "futures",
  "graphql_client",
@@ -3220,6 +3222,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-util",
+ "zstd",
 ]
 
 [[package]]

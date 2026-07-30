@@ -23,7 +23,9 @@ futures = "0.3"
 binrw = "0.15"
 tokio-util = "0.7"
 flate2 = "1"
+zstd = "0.13"
 brotli = "8"
-multer = { version = "3", features = ["log", "tokio-io"] }
+crc32fast = "1"
+multer ={ version = "3", features = ["log", "tokio-io"] }
 http-content-range = "0.2"
 graphql_client = "0.16"

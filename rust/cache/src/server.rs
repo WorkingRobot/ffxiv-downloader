@@ -28,7 +28,8 @@ use url::Url;
 use xiv_core::{
     downloader::Downloader,
     file::{
-        clut::{Clut, ClutIndex},
+        clut::ClutIndex,
+        clut_lazy::LazyClut,
         patch_ref::PatchRef,
         slug::Slug,
         version::{GameVersion, PatchVersion},
@@ -108,7 +109,7 @@ struct ServerImpl {
     downloader: Downloader,
 
     clut_path: String,
-    clut_cache: Cache<(Slug, GameVersion), Arc<Clut>>,
+    clut_cache: Cache<(Slug, GameVersion), Arc<LazyClut>>,
 
     slug_updater_thread: OnceLock<JoinHandle<()>>,
     slug_updater_token: CancellationToken,
@@ -556,7 +557,9 @@ impl Server {
         }
     }
 
-    pub async fn get_clut(&self, slug: Slug, version: GameVersion) -> Result<Arc<Clut>> {
+    /// Fetch a CLUT ready to serve reads. The per-file `DataRef`s are decoded on
+    /// demand rather than up front.
+    pub async fn get_clut(&self, slug: Slug, version: GameVersion) -> Result<Arc<LazyClut>> {
         log::info!(
             "Requesting CLUT {version} ({} in cache)",
             self.0.clut_cache.entry_count()
@@ -565,27 +568,40 @@ impl Server {
             .clut_cache
             .try_get_with((slug, version.clone()), async {
                 let bytes = self.fetch_clut_bytes(slug, version.clone()).await?;
-                let clut = Clut::read(Cursor::new(&bytes))?;
-                if clut.header.repository != slug {
-                    bail!(
-                        "Invalid CLUT file: expected repository {}, found {}",
-                        slug,
-                        clut.header.repository
-                    );
-                }
-                Ok(Arc::new(clut))
+                let clut = LazyClut::read(Cursor::new(&bytes))?;
+                Self::check_clut(&clut, slug, &version)?;
+                Ok::<_, anyhow::Error>(Arc::new(clut))
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get CLUT: {e:?}"))
     }
 
-    /// Like [`get_clut`](Self::get_clut) but parses only the folder set and file
-    /// sizes, without materializing the per-file data references. The result is not
-    /// cached here (it is cheap to reparse from the cached bytes); cache it in the
-    /// caller if needed.
+    fn check_clut(clut: &LazyClut, slug: Slug, version: &GameVersion) -> Result<()> {
+        if clut.header.repository != slug {
+            bail!(
+                "Invalid CLUT file: expected repository {}, found {}",
+                slug,
+                clut.header.repository
+            );
+        }
+        if &clut.header.version != version {
+            bail!(
+                "Invalid CLUT file: expected version {}, found {}",
+                version,
+                clut.header.version
+            );
+        }
+        Ok(())
+    }
+
+    /// Like [`get_clut`](Self::get_clut) but yields only the folder set and each
+    /// file's size. For an indexed CLUT the sizes come out of the index, so no ref is
+    /// decoded. The result is not cached here; cache it in the caller if needed.
     pub async fn get_clut_index(&self, slug: Slug, version: GameVersion) -> Result<ClutIndex> {
-        let bytes = self.fetch_clut_bytes(slug, version).await?;
-        Clut::read_index(Cursor::new(&bytes))
+        let bytes = self.fetch_clut_bytes(slug, version.clone()).await?;
+        let clut = LazyClut::read(Cursor::new(&bytes))?;
+        Self::check_clut(&clut, slug, &version)?;
+        Ok(clut.index())
     }
 
     pub async fn close(&self) -> Result<()> {
