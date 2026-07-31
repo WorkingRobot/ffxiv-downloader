@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::Cursor,
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use anyhow::{Context, Result, bail};
@@ -110,6 +110,7 @@ struct ServerImpl {
     clut_path: String,
     clut_cache: Cache<(Slug, GameVersion), Arc<LazyClut>>,
 
+    slugs: RwLock<Vec<(Slug, SlugData)>>,
     slug_updater_thread: OnceLock<JoinHandle<()>>,
     slug_updater_token: CancellationToken,
     // Shared queue for batching patch data requests
@@ -206,6 +207,7 @@ impl Server {
             downloader,
             clut_path,
             clut_cache,
+            slugs: RwLock::default(),
             slug_updater_thread: OnceLock::new(),
             slug_updater_token: CancellationToken::new(),
             patch_batch_tx,
@@ -340,20 +342,41 @@ impl Server {
                 latest_version,
             };
 
-            slugs.push(slug);
             self.0
                 .cache
-                .insert(CacheKey::Slug(slug), CacheValue::Slug(slug_data));
+                .insert(CacheKey::Slug(slug), CacheValue::Slug(slug_data.clone()));
+            slugs.push((slug, slug_data));
         }
 
-        self.0
-            .cache
-            .insert(CacheKey::SlugList, CacheValue::SlugList(slugs));
+        self.0.cache.insert(
+            CacheKey::SlugList,
+            CacheValue::SlugList(slugs.iter().map(|(slug, _)| *slug).collect()),
+        );
+        *self.0.slugs.write().unwrap() = slugs;
 
         Ok(())
     }
 
+    fn resident_slug(&self, slug: Slug) -> Option<SlugData> {
+        let slugs = self.0.slugs.read().unwrap();
+        slugs
+            .iter()
+            .find(|(s, _)| *s == slug)
+            .map(|(_, data)| data.clone())
+    }
+
     pub async fn get_slug_list(&self) -> Result<Vec<Slug>> {
+        let resident: Vec<Slug> = self
+            .0
+            .slugs
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(slug, _)| *slug)
+            .collect();
+        if !resident.is_empty() {
+            return Ok(resident);
+        }
         if let Some(CacheValue::SlugList(slugs)) =
             self.0.cache.get(&CacheKey::SlugList).await?.as_deref()
         {
@@ -364,6 +387,9 @@ impl Server {
     }
 
     pub async fn get_slug(&self, slug: Slug) -> Result<SlugData> {
+        if let Some(slug_data) = self.resident_slug(slug) {
+            return Ok(slug_data);
+        }
         if let Some(CacheValue::Slug(slug_data)) =
             self.0.cache.get(&CacheKey::Slug(slug)).await?.as_deref()
         {
@@ -435,22 +461,10 @@ impl Server {
     ) {
         let mut errors = Vec::new();
 
-        let base_patch_url = async {
-            // Get slug data to obtain base patch URL
-            let slug_key = CacheKey::Slug(slug);
-            let slug_data = self
-                .0
-                .cache
-                .get(&slug_key)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Slug {} not found in cache", slug))?;
-            let slug_data = match slug_data.value() {
-                CacheValue::Slug(data) => data,
-                _ => return Err(anyhow::anyhow!("Invalid slug data in cache")),
-            };
-            Ok(slug_data.base_patch_url.clone())
-        }
-        .await;
+        let base_patch_url = self
+            .get_slug(slug)
+            .await
+            .map(|slug_data| slug_data.base_patch_url);
 
         match base_patch_url {
             Ok(base_patch_url) => {
