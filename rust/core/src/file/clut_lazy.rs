@@ -269,14 +269,17 @@ impl LazyClut {
             return Ok(Vec::new());
         }
 
-        // The last checkpoint at or before `start` is the earliest that can hold an
-        // overlapping ref. Without the ascending guarantee there is nothing to
-        // bisect, so decode from the top.
+        // A checkpoint's `file_offset` seeds the delta chain, so it is the offset of
+        // the ref *before* its first: decoding from the last checkpoint at or before
+        // `start` skips that ref, and a window opening inside it loses it entirely.
+        // Step back one more to reach it. One is enough because refs are disjoint, so
+        // only the ref immediately preceding the window can reach into it. Without the
+        // ascending guarantee there is nothing to bisect, so decode from the top.
         let first = if block.ascending {
             block
                 .checkpoints
                 .partition_point(|c| c.file_offset <= start)
-                .saturating_sub(1)
+                .saturating_sub(2)
         } else {
             0
         };
@@ -869,6 +872,29 @@ mod tests {
                 .collect();
             let got = lazy.file_refs_range("c.dat", start, end).unwrap();
             assert_eq!(got, expected, "window {start}..{end}");
+        }
+    }
+
+    /// A window can start anywhere, including inside a ref that began under an
+    /// earlier checkpoint. Losing that ref reads as a run of zeroes rather than an
+    /// error, so check every boundary rather than a handful of windows.
+    #[test]
+    fn windowed_decode_keeps_refs_that_start_before_the_window() {
+        let bytes = synth(&[("c.dat", 9000)]);
+        let lazy = LazyClut::read(Cursor::new(&bytes)).unwrap();
+        let all = lazy.file_refs("c.dat").unwrap();
+
+        for r in &all {
+            for start in [r.offset(), r.offset() + u64::from(r.len()) - 1] {
+                let end = start + 1024;
+                let expected: Vec<_> = all
+                    .iter()
+                    .filter(|o| o.offset() < end && o.end() > start)
+                    .cloned()
+                    .collect();
+                let got = lazy.file_refs_range("c.dat", start, end).unwrap();
+                assert_eq!(got, expected, "window {start}..{end}");
+            }
         }
     }
 
