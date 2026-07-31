@@ -22,18 +22,18 @@ impl<T> Weakling<T> {
         lock.upgrade()
     }
 
-    pub async fn fetch<F, Fut>(&self, f: F) -> Arc<T>
+    pub async fn fetch<F, Fut, E>(&self, f: F) -> Result<Arc<T>, E>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Arc<T>>,
+        Fut: std::future::Future<Output = Result<Arc<T>, E>>,
     {
         let mut lock = self.0.lock().await;
         if let Some(data) = lock.upgrade() {
-            data
+            Ok(data)
         } else {
-            let ret = f().await;
+            let ret = f().await?;
             *lock = Arc::downgrade(&ret);
-            ret
+            Ok(ret)
         }
     }
 }

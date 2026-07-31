@@ -560,10 +560,7 @@ impl Server {
     /// Fetch a CLUT ready to serve reads. The per-file `DataRef`s are decoded on
     /// demand rather than up front.
     pub async fn get_clut(&self, slug: Slug, version: GameVersion) -> Result<Arc<LazyClut>> {
-        log::info!(
-            "Requesting CLUT {version} ({} in cache)",
-            self.0.clut_cache.entry_count()
-        );
+        log::debug!("Requesting CLUT {version}");
         self.0
             .clut_cache
             .try_get_with((slug, version.clone()), async {

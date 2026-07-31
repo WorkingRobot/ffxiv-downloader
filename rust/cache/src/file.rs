@@ -145,14 +145,14 @@ impl CacheFile {
         Ok(clut.contains(&file_path))
     }
 
-    async fn clut(&self) -> Arc<LazyClut> {
+    async fn clut(&self) -> std::io::Result<Arc<LazyClut>> {
         self.clut
-            .fetch(async || {
-                Self::fetch_clut(&self.server, self.slug, self.version.clone())
-                    .await
-                    .expect("Failed to fetch CLUT")
-            })
+            .fetch(async || Self::fetch_clut(&self.server, self.slug, self.version.clone()).await)
             .await
+    }
+
+    pub fn name(&self) -> &str {
+        &self.file_name
     }
 
     pub fn len(&self) -> u64 {
@@ -176,21 +176,15 @@ impl CacheFile {
         // Only the refs overlapping this window are decoded; a whole base-game
         // .dat file is 460k refs, of which an 8 MiB read needs ~400.
         let end = buffer.offset() + buffer.len() as u64;
-        let clut = self.clut().await;
+        let clut = self.clut().await?;
         let refs = clut
             .file_refs_range(&self.file_name, buffer.offset(), end)
             .map_err(std::io::Error::other)?;
 
-        let covers = |r: &DataRef, pos: u64| r.offset() <= pos && r.offset() + r.len() as u64 > pos;
-        if !refs.first().is_some_and(|r| covers(r, buffer.offset()))
-            || !refs.last().is_some_and(|r| covers(r, end - 1))
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Invalid offset or length",
-            ));
-        }
-
+        // A sqpack file is not fully covered by refs: entries are 128-byte aligned, and
+        // the padding between them is never written by any patch. Those bytes are zero
+        // in a real install, which is what the downloader leaves in the sparse file it
+        // writes, so an uncovered byte keeps the zero it already has in `buffer`.
         let refs = refs.as_slice();
         let mut patch_refs = HashMap::new();
         for data_ref in refs {
