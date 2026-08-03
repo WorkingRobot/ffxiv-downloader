@@ -126,11 +126,26 @@ jobs:
             artifacts/*/*
 
       - name: Publish Release
+        id: publish
         shell: bash
         run: |
           newest=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sort -V | tail -1)
           [ "$newest" = "v$VERSION" ] && latest=true || latest=false
+          echo "latest=$latest" >> $GITHUB_OUTPUT
           gh release edit "v$VERSION" --draft=false --latest="$latest"
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+
+      # `uses: ...@v9` resolves against a tag, so the major and minor ones follow each release the
+      # line grows. Skipped unless this is the newest, or re-running an old build would drag them
+      # backwards onto it.
+      - name: Move Rolling Tags
+        if: steps.publish.outputs.latest == 'true'
+        shell: bash
+        run: |
+          git tag -f "v${VERSION%%.*}"
+          git tag -f "v${VERSION%.*}"
+          git push -f origin "v${VERSION%%.*}" "v${VERSION%.*}"
+        env:
           VERSION: ${{ steps.version.outputs.version }}
