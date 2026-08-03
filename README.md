@@ -20,7 +20,7 @@
 Here's an example build step:
 ```yaml
 - name: Download EXD Files
-  uses: WorkingRobot/ffxiv-downloader@v10
+  uses: WorkingRobot/ffxiv-downloader@v11
   with:
     output-path: exd-data
     regex: '^sqpack\/ffxiv\/0a0000\..+$'
@@ -36,7 +36,7 @@ Here's an example build step:
 When running this downloaded in a CI/CD environment, it's important to be aware of the volume of data you're downloading. FFXIV does not update often, so it's best to rely on GitHub's built-in action cache whenever possible to speed up your build times. Luckily, this is extremely easy. This action already takes care of only downloading data when it's necessary by storing the currently downloaded version in a file called `.cachemeta.json` inside your `output-path` (unless explicitly disabled by `use-cache`.) All you need to do is cache its data. You can do so by prepending the following step before your downloader step:
 ```yaml
 - name: Retrieve cache
-  uses: actions/cache@v4
+  uses: actions/cache@v6
   with:
     path: exd-data
     # Use the .cachemeta.json file to invalidate the cache when the data changes.
