@@ -9,7 +9,7 @@ use reqwest::Client;
 use tokio_util::io::SyncIoBridge;
 use xiv_core::file::lut::Lut;
 use xiv_core::file::version::{GameVersion, PatchVersion};
-use xiv_core::thaliak::chain::{Patch, get_patch_chain};
+use xiv_core::thaliak::chain::{Patch, get_patch_chain, get_patch_forest};
 use xiv_core::thaliak::get_repository_metadata;
 use xiv_core::zipatch::ZiPatch;
 
@@ -24,6 +24,13 @@ pub struct LutArgs {
     /// Version to walk back from (default: latest)
     #[arg(short, long, value_name = "VERSION")]
     pub version: Option<String>,
+    /// Build a LUT for every version the repository offers, not only the chain to one
+    #[arg(long, conflicts_with_all = ["version", "urls"])]
+    pub all_versions: bool,
+    /// Stop queueing once this many bytes of patches are due, leaving the rest to a
+    /// later run (default: no limit)
+    #[arg(long, value_name = "BYTES")]
+    pub max_patch_bytes: Option<u64>,
     /// Patch URLs or paths to use instead of a Thaliak chain
     #[arg(long, value_name = "URL", num_args = 1..)]
     pub urls: Vec<String>,
@@ -62,6 +69,24 @@ pub async fn run(args: LutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resul
             }
             !exists
         });
+    }
+
+    // Oldest first, so what a run does buy completes the chains behind it rather than
+    // scattering patches no CLUT can yet be folded from.
+    if let Some(budget) = args.max_patch_bytes {
+        let mut queued = 0u64;
+        let due = chain.len();
+        chain.retain(|(_, patch)| {
+            let within = queued <= budget;
+            queued = queued.saturating_add(patch.size.unsigned_abs());
+            within
+        });
+        if chain.len() < due {
+            log::info!(
+                "Budget covers {} of {due} patches; the rest wait for a later run",
+                chain.len()
+            );
+        }
     }
 
     let unknown = chain.iter().any(|(_, patch)| patch.size == 0);
@@ -153,6 +178,15 @@ pub async fn resolve_chain(client: &Client, args: &LutArgs) -> Result<Vec<(GameV
                 ))
             })
             .collect();
+    }
+
+    if args.all_versions {
+        log::debug!("Downloading version graph");
+        return Ok(get_patch_forest(client, &args.slug)
+            .await?
+            .into_iter()
+            .map(|step| (step.version, step.patch))
+            .collect());
     }
 
     let meta = get_repository_metadata(client, &args.slug).await?;

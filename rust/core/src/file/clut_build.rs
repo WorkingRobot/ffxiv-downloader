@@ -449,6 +449,39 @@ mod tests {
         );
     }
 
+    /// Folding every lineage resumes a fork from the CLUT already written there instead
+    /// of keeping one builder open per branch, so a builder has to survive that round
+    /// trip, including the collapse that the next patch triggers.
+    #[test]
+    fn a_builder_resumed_from_its_own_clut_is_unchanged() {
+        // A CLUT is written from collapsed state, so its references are disjoint.
+        let mut builder = ClutBuilder::new(Header::default());
+        for (path, offset) in [("b.dat", 0u64), ("a.dat", 100), ("c.dat", 200)] {
+            builder.files.insert(
+                path.to_string(),
+                vec![raw(offset, 50), raw(offset + 50, 20)],
+            );
+            builder.folders.insert(format!("dir/{path}"));
+        }
+        let payload = builder.payload().unwrap();
+
+        for compression in [CompressType::None, CompressType::Zstd] {
+            let plain = builder.wrap(&payload, CompressType::None).unwrap();
+            let written = LazyClut::read(Cursor::new(plain))
+                .unwrap()
+                .rewrite(compression)
+                .unwrap();
+
+            let mut resumed =
+                ClutBuilder::from_clut(&LazyClut::read(Cursor::new(written)).unwrap()).unwrap();
+            assert_eq!(resumed.folders, builder.folders);
+            assert_eq!(resumed.payload().unwrap(), payload);
+
+            resumed.remove_overlaps().unwrap();
+            assert_eq!(resumed.payload().unwrap(), payload);
+        }
+    }
+
     /// The same builder state must serialize to the same bytes every time, so a
     /// regenerated corpus does not churn.
     #[test]

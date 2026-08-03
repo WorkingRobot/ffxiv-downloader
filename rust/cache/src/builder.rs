@@ -12,6 +12,7 @@ pub struct ServerBuilder {
     pub(super) batch_window_ms: u64,
     pub(super) clut_tti_secs: u64,
     pub(super) slug_update_interval_secs: u64,
+    pub(super) clut_index_interval_secs: u64,
     pub(super) ram_entry_capacity: usize,
     pub(super) clut_data_multiplier: usize,
     pub(super) patch_ref_multiplier: usize,
@@ -52,6 +53,14 @@ impl ServerBuilder {
     /// Interval in seconds to update repositories from Thaliak
     pub fn slug_update_interval_secs(mut self, secs: u64) -> Self {
         self.slug_update_interval_secs = secs;
+        self
+    }
+
+    /// Interval in seconds to relist the CLUTs each repository has. One listing per
+    /// repository is one API request, so this is kept well clear of GitHub's hourly
+    /// allowance rather than following the Thaliak tick.
+    pub fn clut_index_interval_secs(mut self, secs: u64) -> Self {
+        self.clut_index_interval_secs = secs;
         self
     }
 
@@ -111,11 +120,12 @@ impl Default for ServerBuilder {
                     .to_string(),
             clut_ram_bytes: 512 << 20, // 512 MiB of parsed CLUTs
             batch_window_ms: 20,
-            clut_tti_secs: 30 * 60,        // 30 minutes
-            slug_update_interval_secs: 60, // 1 minute
-            ram_entry_capacity: 16384,     // 16k "entries" in RAM
-            clut_data_multiplier: 1024,    // 1024x multiplier for CLUT data in RAM cache
-            patch_ref_multiplier: 8,       // 8x multiplier for patch references in RAM cache
+            clut_tti_secs: 30 * 60,            // 30 minutes
+            slug_update_interval_secs: 60,     // 1 minute
+            clut_index_interval_secs: 60 * 60, // 1 hour
+            ram_entry_capacity: 16384,         // 16k "entries" in RAM
+            clut_data_multiplier: 1024,        // 1024x multiplier for CLUT data in RAM cache
+            patch_ref_multiplier: 8,           // 8x multiplier for patch references in RAM cache
             storage_directory: None,
             storage_capacity_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             max_concurrent_downloads: 16,

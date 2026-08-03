@@ -195,6 +195,15 @@ pub fn overrides_for(slug: &str) -> Option<&'static Overrides> {
     PARSED_OVERRIDES.get(slug)
 }
 
+/// A version's place in the graph: the patch that reaches it, and the version that
+/// patch is applied on top of.
+#[derive(Debug, Clone)]
+pub struct Step {
+    pub version: GameVersion,
+    pub patch: Patch,
+    pub parent: Option<GameVersion>,
+}
+
 pub async fn get_versions(client: &Client, slug: &str) -> Result<Vec<Node>> {
     let mut nodes = super::query_versions(client, slug).await?;
 
@@ -218,12 +227,16 @@ pub async fn get_patch_chain(
     build_chain(slug, &nodes, version)
 }
 
-fn build_chain(
-    slug: &str,
-    nodes: &[Node],
-    version: &GameVersion,
-) -> Result<Vec<(GameVersion, Patch)>> {
-    let mut by_version: HashMap<&GameVersion, &Node> = HashMap::with_capacity(nodes.len());
+/// Every version the repository offers, not only those on the chain to one of them.
+pub async fn get_patch_forest(client: &Client, slug: &str) -> Result<Vec<Step>> {
+    let nodes = get_versions(client, slug).await?;
+    build_forest(slug, &nodes)
+}
+
+type VersionIndex<'a> = HashMap<&'a GameVersion, &'a Node>;
+
+fn index_versions<'a>(slug: &str, nodes: &'a [Node]) -> VersionIndex<'a> {
+    let mut by_version = HashMap::with_capacity(nodes.len());
     for node in nodes {
         if by_version.insert(&node.version, node).is_some() {
             // Thaliak has caught up with an injected version, so EXTRA_VERSIONS has an
@@ -231,52 +244,188 @@ fn build_chain(
             log::warn!("{slug} lists {} more than once", node.version);
         }
     }
+    by_version
+}
 
-    let overrides = overrides_for(slug);
+fn sole_patch<'a>(slug: &str, node: &'a Node) -> Result<&'a Patch> {
+    ensure!(
+        node.patches.len() == 1,
+        "{slug} version {} has {} patches, expected 1",
+        node.version,
+        node.patches.len()
+    );
+    Ok(&node.patches[0])
+}
+
+/// The version a patch is applied on top of, or `None` where a lineage begins.
+///
+/// Thaliak lists a lineage's every later version as a prerequisite of the full-install
+/// patch that starts it, so those edges point forward. A prerequisite is older than what
+/// it precedes, which makes the newer ones no such thing; discarding them also leaves a
+/// walk whose version strictly descends, and which therefore ends.
+fn predecessor<'a>(
+    slug: &str,
+    by_version: &VersionIndex<'a>,
+    node: &Node,
+) -> Result<Option<&'a Node>> {
+    if let Some(replacement) = overrides_for(slug).and_then(|o| o.get(&node.version)) {
+        let Some(replacement) = replacement else {
+            return Ok(None);
+        };
+        log::debug!("Overriding {} with {replacement}", node.version);
+        return by_version
+            .get(replacement)
+            .copied()
+            .with_context(|| format!("{slug} has no version {replacement}"))
+            .map(Some);
+    }
+
+    // Among the prerequisites, take the newest. An inactive version may still lead back
+    // through inactive ones; an active one may not.
+    Ok(node
+        .prerequisites
+        .iter()
+        .filter(|prereq| **prereq < node.version)
+        .map(|prereq| {
+            by_version
+                .get(prereq)
+                .copied()
+                .with_context(|| format!("{slug} has no version {prereq}"))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|prereq| !node.is_active || prereq.is_active)
+        .max_by(|a, b| a.version.cmp(&b.version)))
+}
+
+fn build_chain(
+    slug: &str,
+    nodes: &[Node],
+    version: &GameVersion,
+) -> Result<Vec<(GameVersion, Patch)>> {
+    let by_version = index_versions(slug, nodes);
+
     let mut chain: Vec<(GameVersion, Patch)> = Vec::new();
     let mut current = by_version.get(version).copied();
-
     while let Some(node) = current {
-        ensure!(
-            node.patches.len() == 1,
-            "{slug} version {} has {} patches, expected 1",
-            node.version,
-            node.patches.len()
-        );
-        chain.push((node.version.clone(), node.patches[0].clone()));
-
-        if let Some(replacement) = overrides.and_then(|o| o.get(&node.version)) {
-            let Some(replacement) = replacement else {
-                break;
-            };
-            log::debug!("Overriding {} with {replacement}", node.version);
-            current = Some(
-                by_version
-                    .get(replacement)
-                    .copied()
-                    .with_context(|| format!("{slug} has no version {replacement}"))?,
-            );
-            continue;
-        }
-
-        // Among the prerequisites not already walked, take the newest. An inactive
-        // version may still lead back through inactive ones; an active one may not.
-        current = node
-            .prerequisites
-            .iter()
-            .filter(|prereq| !chain.iter().any(|(walked, _)| walked == *prereq))
-            .map(|prereq| {
-                by_version
-                    .get(prereq)
-                    .copied()
-                    .with_context(|| format!("{slug} has no version {prereq}"))
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|prereq| !node.is_active || prereq.is_active)
-            .max_by(|a, b| a.version.cmp(&b.version));
+        chain.push((node.version.clone(), sole_patch(slug, node)?.clone()));
+        current = predecessor(slug, &by_version, node)?;
     }
 
     chain.reverse();
     Ok(chain)
+}
+
+/// Every version in the repository, each paired with the one it follows. Ordered so
+/// that a version comes after its parent, which holds because a parent is older.
+pub fn build_forest(slug: &str, nodes: &[Node]) -> Result<Vec<Step>> {
+    let by_version = index_versions(slug, nodes);
+
+    let mut steps = by_version
+        .values()
+        .map(|node| {
+            Ok(Step {
+                version: node.version.clone(),
+                patch: sole_patch(slug, node)?.clone(),
+                parent: predecessor(slug, &by_version, node)?.map(|parent| parent.version.clone()),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    steps.sort_by(|a, b| a.version.cmp(&b.version));
+    Ok(steps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(version: &str, prerequisites: &[&str]) -> Node {
+        Node {
+            version: GameVersion::new(version).unwrap(),
+            is_active: true,
+            prerequisites: prerequisites
+                .iter()
+                .map(|version| GameVersion::new(version).unwrap())
+                .collect(),
+            patches: vec![Patch {
+                url: format!("http://patches/{version}.patch"),
+                size: 1,
+            }],
+        }
+    }
+
+    /// The lineage: a full install, one more historic patch, then two ordinary ones. The
+    /// full install lists everything that follows it as a prerequisite.
+    fn lineage() -> [Node; 4] {
+        [
+            node(
+                "H2024.01.01.0000.0000a",
+                &["2024.02.02.0000.0000", "2024.03.03.0000.0000"],
+            ),
+            node("H2024.01.01.0000.0000b", &["H2024.01.01.0000.0000a"]),
+            node("2024.02.02.0000.0000", &["H2024.01.01.0000.0000b"]),
+            node("2024.03.03.0000.0000", &["2024.02.02.0000.0000"]),
+        ]
+    }
+
+    fn walked(nodes: &[Node], version: &str) -> Vec<String> {
+        build_chain("slug", nodes, &GameVersion::new(version).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(version, _)| version.to_string())
+            .collect()
+    }
+
+    /// Taking a full install's forward-pointing prerequisites at face value sends a walk
+    /// up the lineage and back down it, so a version in the middle would be reached by
+    /// applying its own successors first.
+    #[test]
+    fn a_chain_stops_where_its_lineage_begins() {
+        let nodes = lineage();
+        assert_eq!(
+            walked(&nodes, "H2024.01.01.0000.0000b"),
+            ["H2024.01.01.0000.0000a", "H2024.01.01.0000.0000b"]
+        );
+        assert_eq!(
+            walked(&nodes, "2024.03.03.0000.0000"),
+            [
+                "H2024.01.01.0000.0000a",
+                "H2024.01.01.0000.0000b",
+                "2024.02.02.0000.0000",
+                "2024.03.03.0000.0000",
+            ]
+        );
+    }
+
+    /// The walk to a version is the walk to its parent with that version on the end, so
+    /// folding the forest reaches every version having applied each patch once.
+    #[test]
+    fn a_forest_holds_every_version_after_the_one_it_follows() {
+        let nodes = lineage();
+        let forest = build_forest("slug", &nodes).unwrap();
+        assert_eq!(forest.len(), nodes.len());
+        assert_eq!(
+            forest.iter().filter(|step| step.parent.is_none()).count(),
+            1
+        );
+
+        let mut placed: Vec<GameVersion> = Vec::new();
+        for step in &forest {
+            if let Some(parent) = &step.parent {
+                assert!(
+                    placed.contains(parent),
+                    "{} is placed before {parent}, which it follows",
+                    step.version
+                );
+                assert!(
+                    *parent < step.version,
+                    "{parent} is not older than {}",
+                    step.version
+                );
+            }
+            let chain = walked(&nodes, &step.version.to_string());
+            assert_eq!(chain.last().unwrap(), &step.version.to_string());
+            placed.push(step.version.clone());
+        }
+    }
 }

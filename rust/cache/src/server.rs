@@ -3,6 +3,7 @@ use std::{
     io::Cursor,
     str::FromStr,
     sync::{Arc, OnceLock, RwLock},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -70,6 +71,32 @@ enum CacheValue {
     PatchData(Vec<u8>),
 }
 
+/// Which versions each repository has a CLUT for, and when that was last established.
+#[derive(Debug, Default)]
+struct ClutListing {
+    listed: Option<Instant>,
+    versions: HashMap<Slug, Vec<GameVersion>>,
+}
+
+#[derive(Deserialize)]
+struct ContentEntry {
+    name: String,
+}
+
+/// The listing endpoint for one repository's CLUTs, if they are held in a GitHub
+/// repository. It names every CLUT a slug has in a single request, where asking after
+/// each version separately would take thousands.
+fn contents_api(clut_path: &str, slug: Slug) -> Option<String> {
+    let rest = clut_path.strip_prefix("https://raw.githubusercontent.com/")?;
+    let (owner, rest) = rest.split_once('/')?;
+    let (repo, rest) = rest.split_once('/')?;
+    let rest = rest.strip_prefix("refs/heads/").unwrap_or(rest);
+    let (git_ref, dir) = rest.split_once('/')?;
+    Some(format!(
+        "https://api.github.com/repos/{owner}/{repo}/contents/{dir}/{slug}?ref={git_ref}"
+    ))
+}
+
 struct SafeSender<T> {
     tx: Option<Sender<T>>,
 }
@@ -110,6 +137,9 @@ struct ServerImpl {
     clut_path: String,
     clut_cache: Cache<(Slug, GameVersion), Arc<LazyClut>>,
 
+    clut_index: RwLock<ClutListing>,
+    clut_index_interval: Duration,
+
     slugs: RwLock<Vec<(Slug, SlugData)>>,
     slug_updater_thread: OnceLock<JoinHandle<()>>,
     slug_updater_token: CancellationToken,
@@ -134,6 +164,7 @@ impl Server {
             batch_window_ms,
             clut_tti_secs,
             slug_update_interval_secs,
+            clut_index_interval_secs,
             ram_entry_capacity,
             clut_data_multiplier,
             patch_ref_multiplier,
@@ -207,6 +238,8 @@ impl Server {
             downloader,
             clut_path,
             clut_cache,
+            clut_index: RwLock::default(),
+            clut_index_interval: Duration::from_secs(clut_index_interval_secs),
             slugs: RwLock::default(),
             slug_updater_thread: OnceLock::new(),
             slug_updater_token: CancellationToken::new(),
@@ -304,8 +337,73 @@ impl Server {
         Ok(this)
     }
 
+    /// Relist the CLUTs each repository has, if the last listing has aged out.
+    async fn refresh_clut_index(&self, slugs: &[Slug]) {
+        if self
+            .0
+            .clut_index
+            .read()
+            .unwrap()
+            .listed
+            .is_some_and(|at| at.elapsed() < self.0.clut_index_interval)
+        {
+            return;
+        }
+
+        let listings: HashMap<Slug, Vec<GameVersion>> = slugs
+            .iter()
+            .filter_map(|slug| contents_api(&self.0.clut_path, *slug).map(|url| (*slug, url)))
+            .map(|(slug, url)| async move {
+                match self.list_cluts(&url).await {
+                    Ok(versions) => Some((slug, versions)),
+                    Err(e) => {
+                        log::warn!("Failed to list CLUTs for {slug}: {e:?}");
+                        None
+                    }
+                }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .filter_map(ready)
+            .collect()
+            .await;
+
+        if listings.is_empty() {
+            return;
+        }
+        let mut index = self.0.clut_index.write().unwrap();
+        index.listed = Some(Instant::now());
+        index.versions.extend(listings);
+    }
+
+    async fn list_cluts(&self, url: &str) -> Result<Vec<GameVersion>> {
+        let entries: Vec<ContentEntry> = self
+            .0
+            .http_client
+            .get(url)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        let mut versions: Vec<GameVersion> = entries
+            .iter()
+            .filter_map(|entry| entry.name.strip_suffix(".clut"))
+            .filter_map(|name| GameVersion::new(name).ok())
+            .collect();
+        versions.sort();
+        Ok(versions)
+    }
+
     pub async fn update_slugs(&self) -> Result<()> {
         let repos = get_all_repositories(&self.0.http_client).await?;
+
+        let known = repos
+            .iter()
+            .map(|repo| Slug::from_str(&repo.slug))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.refresh_clut_index(&known).await;
 
         let mut slugs = Vec::new();
         for repo in repos {
@@ -325,15 +423,33 @@ impl Server {
                 patch_url.to_string()
             };
             let latest_version = GameVersion::new(&repo.latest_version.version_string)?;
-            let versions = repo
+            let served = self
+                .0
+                .clut_index
+                .read()
+                .unwrap()
                 .versions
-                .into_iter()
-                .filter(|v| v.is_active)
-                .map(|v| {
-                    GameVersion::new(&v.version_string)
-                        .context(format!("Invalid version string: {}", v.version_string))
-                })
-                .collect::<Result<Vec<_>>>()?;
+                .get(&slug)
+                .cloned();
+            // A version can only be read if a CLUT was built for it, which covers the
+            // lineages the current patch chain has left behind as well as the one it is
+            // on. Without a listing to go by, fall back to what the chain still offers.
+            let versions = match served {
+                Some(served) => served,
+                None => {
+                    let mut versions = repo
+                        .versions
+                        .into_iter()
+                        .filter(|v| v.is_active)
+                        .map(|v| {
+                            GameVersion::new(&v.version_string)
+                                .context(format!("Invalid version string: {}", v.version_string))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    versions.sort();
+                    versions
+                }
+            };
 
             let slug_data = SlugData {
                 base_patch_url,
