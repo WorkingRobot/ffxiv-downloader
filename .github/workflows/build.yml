@@ -87,12 +87,15 @@ jobs:
           fetch-tags: true
           submodules: recursive
 
+      # v3 errors on a tag that already exists, and this runs on every push, so the version only
+      # moves when the manifest says a new one. v2 overwrote by default.
       - name: Check Version
         id: version
         uses: issue-ops/semver@v3
         with:
           manifest-path: action.yml
           workspace: ${{ github.workspace }}
+          overwrite: true
 
       - name: Check if release exists
         id: check_release
