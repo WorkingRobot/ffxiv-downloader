@@ -109,7 +109,6 @@ pub async fn run(args: ClutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resu
             slug: args.slug.clone(),
             version: args.version.clone(),
             all_versions: false,
-            max_patch_bytes: None,
             urls: args.urls.clone(),
             parallelism: None,
             output_path: None,

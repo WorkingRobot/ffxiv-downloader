@@ -27,10 +27,6 @@ pub struct LutArgs {
     /// Build a LUT for every version the repository offers, not only the chain to one
     #[arg(long, conflicts_with_all = ["version", "urls"])]
     pub all_versions: bool,
-    /// Stop queueing once this many bytes of patches are due, leaving the rest to a
-    /// later run (default: no limit)
-    #[arg(long, value_name = "BYTES")]
-    pub max_patch_bytes: Option<u64>,
     /// Patch URLs or paths to use instead of a Thaliak chain
     #[arg(long, value_name = "URL", num_args = 1..)]
     pub urls: Vec<String>,
@@ -71,24 +67,6 @@ pub async fn run(args: LutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resul
         });
     }
 
-    // Oldest first, so what a run does buy completes the chains behind it rather than
-    // scattering patches no CLUT can yet be folded from.
-    if let Some(budget) = args.max_patch_bytes {
-        let mut queued = 0u64;
-        let due = chain.len();
-        chain.retain(|(_, patch)| {
-            let within = queued <= budget;
-            queued = queued.saturating_add(patch.size.unsigned_abs());
-            within
-        });
-        if chain.len() < due {
-            log::info!(
-                "Budget covers {} of {due} patches; the rest wait for a later run",
-                chain.len()
-            );
-        }
-    }
-
     let unknown = chain.iter().any(|(_, patch)| patch.size == 0);
     let total: i64 = chain.iter().map(|(_, patch)| patch.size).sum();
     log::info!(
@@ -98,41 +76,61 @@ pub async fn run(args: LutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resul
     );
 
     let parallelism = args.parallelism.unwrap_or_else(num_cpus::get);
-    let compression = args.compression.into();
+    let compression = args.compression;
     let slug = &args.slug;
     let output = &output;
+
+    // A chain is a sequence each patch depends on, so losing one ends it. A forest is not: the
+    // repository still lists versions the CDN has since dropped, and the rest stay buildable.
+    let lossy = args.all_versions;
 
     futures::stream::iter(chain.into_iter().map(Ok))
         .try_for_each_concurrent(parallelism, |(_, patch)| {
             let fetcher = fetcher.clone();
             async move {
-                let version = patch.version()?;
-                log::info!("Downloading patch {version}");
-                log::debug!("  URL: {}", patch.url);
-                if patch.size != 0 {
-                    log::debug!("  Size: {:.2} MiB", patch.size as f64 / (1 << 20) as f64);
+                match build(&fetcher, &patch, slug, compression, output).await {
+                    Err(error) if lossy => {
+                        log::warn!("Skipping {}: {error:#}", patch.url);
+                        Ok(())
+                    }
+                    result => result,
                 }
-
-                let chunks = read_chunks(&fetcher, &patch, &version).await?;
-                let lut = Lut {
-                    compression,
-                    repository: slug.clone(),
-                    version: version.clone(),
-                    chunks,
-                };
-
-                let name = format!("{version}.lut");
-                log::debug!("Writing to {name}");
-                let bytes = tokio::task::spawn_blocking(move || lut.write()).await??;
-                tokio::fs::write(output.join(&name), &bytes).await?;
-                log::info!(
-                    "Finished {version} ({:.2} KiB)",
-                    bytes.len() as f64 / (1 << 10) as f64
-                );
-                Ok::<_, anyhow::Error>(())
             }
         })
         .await
+}
+
+async fn build(
+    fetcher: &Fetcher,
+    patch: &Patch,
+    slug: &str,
+    compression: Compression,
+    output: &PathBuf,
+) -> Result<()> {
+    let version = patch.version()?;
+    log::info!("Downloading patch {version}");
+    log::debug!("  URL: {}", patch.url);
+    if patch.size != 0 {
+        log::debug!("  Size: {:.2} MiB", patch.size as f64 / (1 << 20) as f64);
+    }
+
+    let chunks = read_chunks(fetcher, patch, &version).await?;
+    let lut = Lut {
+        compression: compression.into(),
+        repository: slug.to_owned(),
+        version: version.clone(),
+        chunks,
+    };
+
+    let name = format!("{version}.lut");
+    log::debug!("Writing to {name}");
+    let bytes = tokio::task::spawn_blocking(move || lut.write()).await??;
+    tokio::fs::write(output.join(&name), &bytes).await?;
+    log::info!(
+        "Finished {version} ({:.2} KiB)",
+        bytes.len() as f64 / (1 << 10) as f64
+    );
+    Ok(())
 }
 
 /// Parse a patch as it downloads.
