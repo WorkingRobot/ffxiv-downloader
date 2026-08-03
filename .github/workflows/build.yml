@@ -134,3 +134,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Update Rolling Tags
+        if: steps.check_release.outputs.exists == 'false'
+        shell: bash
+        run: |
+          git tag -f "v${VERSION%%.*}"
+          git tag -f "v${VERSION%.*}"
+          git push -f origin "v${VERSION%%.*}" "v${VERSION%.*}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
