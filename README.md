@@ -33,7 +33,7 @@ Here's an example build step:
 
 ## Caching
 
-When running this downloaded in a CI/CD environment, it's important to be aware of the volume of data you're downloading. FFXIV does not update often, so it's best to rely on GitHub's built-in action cache whenever possible to speed up your build times. Luckily, this is extremely easy. This action already takes care of only downloading data when it's necessary by storing the currently downloaded version in a file called `.cachemeta.json` inside your `output-path` (unless explicitly disabled by `skip-cache`.) All you need to do is cache its data. You can do so by prepending the following step before your downloader step:
+When running this downloaded in a CI/CD environment, it's important to be aware of the volume of data you're downloading. FFXIV does not update often, so it's best to rely on GitHub's built-in action cache whenever possible to speed up your build times. Luckily, this is extremely easy. This action already takes care of only downloading data when it's necessary by storing the currently downloaded version in a file called `.cachemeta.json` inside your `output-path` (unless explicitly disabled by `use-cache`.) All you need to do is cache its data. You can do so by prepending the following step before your downloader step:
 ```yaml
 - name: Retrieve cache
   uses: actions/cache@v4
@@ -71,8 +71,8 @@ Number of concurrent threads to use when updating. Defaults to `4`.
 ### `clut-path`
 Best to leave default. Automatically grabs clut (index-style) files from the [official repository](https://github.com/WorkingRobot/ffxiv-lut) to speed up downloads dramatically.
 
-### `skip-cache`
-If true, a `.cachemeta.json` file will not be created to track versioning. As such, files will be redownloaded every time this runs.
+### `use-cache`
+Whether to track versioning with a `.cachemeta.json` file. Enabled by default. If false, the file is not created and downloads always start from scratch.
 
 ### `debug`
 Toggles debug logging. Disabled by default.
