@@ -1,5 +1,5 @@
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -105,7 +105,7 @@ async fn build(
     patch: &Patch,
     slug: &str,
     compression: Compression,
-    output: &PathBuf,
+    output: &Path,
 ) -> Result<()> {
     let version = patch.version()?;
     log::info!("Downloading patch {version}");
