@@ -31,5 +31,8 @@ itertools = "0.15"
 prometheus = { version = "0.14", optional = true }
 mixtrics = { version = "0.2", features = ["prometheus"], optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
+
 [build-dependencies]
 shadow-rs = "2"

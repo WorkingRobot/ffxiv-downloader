@@ -3160,6 +3160,7 @@ dependencies = [
  "either",
  "foyer",
  "futures",
+ "io-uring",
  "itertools 0.15.0",
  "log",
  "mixtrics",

@@ -12,8 +12,10 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
     BlockEngineConfig, Compression, Device, DeviceBuilder, FileDeviceBuilder, FsDeviceBuilder,
-    HybridCache, HybridCacheBuilder, IoEngineConfig, NoopIoEngineConfig,
+    HybridCache, HybridCacheBuilder, IoEngineConfig, NoopIoEngineConfig, PsyncIoEngineConfig,
 };
+#[cfg(target_os = "linux")]
+use foyer::UringIoEngineConfig;
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
 };
@@ -40,12 +42,29 @@ use xiv_core::{
     thaliak::get_all_repositories,
 };
 
-// Doesn't work on Docker without seccomp changes, so let's just not touch it at all.
-// #[cfg(target_os = "linux")]
-// type FoyerIoEngineConfig = foyer::UringIoEngineConfig;
+/// Docker's default seccomp profile can deny `io_uring_setup`; probe a throwaway ring
+/// and fall back to psync if so. Left at the single-ring default rather than tuned with
+/// `.with_threads`/`.with_io_depth`, so the one-ring probe stays a faithful test of what
+/// the real build will attempt.
+#[cfg(target_os = "linux")]
+fn select_io_engine_config() -> Box<dyn IoEngineConfig> {
+    match io_uring::IoUring::new(1) {
+        Ok(_) => {
+            log::info!("disk cache I/O engine: io_uring");
+            UringIoEngineConfig::new().boxed()
+        }
+        Err(e) => {
+            log::info!("disk cache I/O engine: psync (io_uring unavailable: {e})");
+            PsyncIoEngineConfig::new().boxed()
+        }
+    }
+}
 
-// #[cfg(not(target_os = "linux"))]
-type FoyerIoEngineConfig = foyer::PsyncIoEngineConfig;
+#[cfg(not(target_os = "linux"))]
+fn select_io_engine_config() -> Box<dyn IoEngineConfig> {
+    log::info!("disk cache I/O engine: psync");
+    PsyncIoEngineConfig::new().boxed()
+}
 
 use crate::{build, builder::ServerBuilder};
 
@@ -234,7 +253,7 @@ impl Server {
 
         if let Some(device) = device {
             cache = cache
-                .with_io_engine_config(FoyerIoEngineConfig::default())
+                .with_io_engine_config(select_io_engine_config())
                 .with_engine_config(BlockEngineConfig::new(device))
         } else {
             cache = cache
