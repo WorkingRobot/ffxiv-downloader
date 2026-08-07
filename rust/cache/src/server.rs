@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
-    io::Cursor,
+    fs::File,
+    io::{Cursor, Seek, SeekFrom},
+    path::Path,
     str::FromStr,
     sync::{Arc, OnceLock, RwLock},
     time::{Duration, Instant},
@@ -9,8 +11,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use foyer::{
-    BlockEngineConfig, Compression, DeviceBuilder, FsDeviceBuilder, HybridCache,
-    HybridCacheBuilder, IoEngineConfig, NoopIoEngineConfig,
+    BlockEngineConfig, Compression, Device, DeviceBuilder, FileDeviceBuilder, FsDeviceBuilder,
+    HybridCache, HybridCacheBuilder, IoEngineConfig, NoopIoEngineConfig,
 };
 use futures::{
     FutureExt, Stream, StreamExt, TryStreamExt, future::ready, stream::FuturesUnordered,
@@ -81,6 +83,15 @@ struct ClutListing {
 #[derive(Deserialize)]
 struct ContentEntry {
     name: String,
+}
+
+/// The size of an already-existing storage file or raw block device, used to fill
+/// `storage_file` when no explicit capacity is given. `metadata().len()` reads as 0 for
+/// a block special file, so this seeks to the end instead, which the kernel resolves to
+/// the device's real size.
+fn existing_size(path: &Path) -> Option<usize> {
+    let size = File::open(path).ok()?.seek(SeekFrom::End(0)).ok()?;
+    (size > 0).then_some(size as usize)
 }
 
 /// The listing endpoint for one repository's CLUTs, if they are held in a GitHub
@@ -169,6 +180,7 @@ impl Server {
             clut_data_multiplier,
             patch_ref_multiplier,
             storage_directory,
+            storage_file,
             storage_capacity_bytes,
             max_concurrent_downloads,
             #[cfg(feature = "prometheus")]
@@ -204,14 +216,26 @@ impl Server {
             })
             .storage();
 
-        if let Some(storage_directory) = &storage_directory {
+        let device: Option<Arc<dyn Device>> = if let Some(storage_file) = &storage_file {
+            let mut builder = FileDeviceBuilder::new(storage_file);
+            if let Some(bytes) = storage_capacity_bytes.or_else(|| existing_size(storage_file)) {
+                builder = builder.with_capacity(bytes);
+            }
+            Some(builder.build()?)
+        } else if let Some(storage_directory) = &storage_directory {
+            let mut builder = FsDeviceBuilder::new(storage_directory);
+            if let Some(bytes) = storage_capacity_bytes {
+                builder = builder.with_capacity(bytes);
+            }
+            Some(builder.build()?)
+        } else {
+            None
+        };
+
+        if let Some(device) = device {
             cache = cache
                 .with_io_engine_config(FoyerIoEngineConfig::default())
-                .with_engine_config(BlockEngineConfig::new(
-                    FsDeviceBuilder::new(storage_directory)
-                        .with_capacity(storage_capacity_bytes)
-                        .build()?,
-                ))
+                .with_engine_config(BlockEngineConfig::new(device))
         } else {
             cache = cache
                 .with_io_engine_config(Box::new(NoopIoEngineConfig) as Box<dyn IoEngineConfig>);

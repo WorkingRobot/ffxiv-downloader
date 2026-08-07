@@ -17,7 +17,8 @@ pub struct ServerBuilder {
     pub(super) clut_data_multiplier: usize,
     pub(super) patch_ref_multiplier: usize,
     pub(super) storage_directory: Option<PathBuf>,
-    pub(super) storage_capacity_bytes: usize,
+    pub(super) storage_file: Option<PathBuf>,
+    pub(super) storage_capacity_bytes: Option<usize>,
     pub(super) max_concurrent_downloads: usize,
     #[cfg(feature = "prometheus")]
     #[serde(skip)]
@@ -88,9 +89,18 @@ impl ServerBuilder {
         self
     }
 
-    /// Maximum size of the storage in bytes
+    /// Single file or raw block device to store cache files on, in place of a
+    /// directory. Takes precedence over `storage_directory` if both are set.
+    pub fn storage_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.storage_file = Some(path.into());
+        self
+    }
+
+    /// Maximum size of the storage in bytes. Left unset, a directory falls back to
+    /// foyer's own free-space heuristic, and a file or device is filled to its
+    /// existing size.
     pub fn storage_capacity_bytes(mut self, bytes: usize) -> Self {
-        self.storage_capacity_bytes = bytes;
+        self.storage_capacity_bytes = Some(bytes);
         self
     }
 
@@ -127,7 +137,8 @@ impl Default for ServerBuilder {
             clut_data_multiplier: 1024,        // 1024x multiplier for CLUT data in RAM cache
             patch_ref_multiplier: 8,           // 8x multiplier for patch references in RAM cache
             storage_directory: None,
-            storage_capacity_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
+            storage_file: None,
+            storage_capacity_bytes: None,
             max_concurrent_downloads: 16,
             #[cfg(feature = "prometheus")]
             prometheus_registry: None,
