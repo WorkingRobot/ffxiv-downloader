@@ -13,7 +13,11 @@ use reqwest::{
 use reqwest_leaky_bucket::leaky_bucket::RateLimiter;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{Jitter, RetryTransientMiddleware, policies::ExponentialBackoff};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use std::{fmt, io::Read, slice};
 use tokio::sync::Semaphore;
 use tokio_util::io::StreamReader;
@@ -87,6 +91,13 @@ impl fmt::Display for MergedRange {
     }
 }
 
+fn host(url: &str) -> Option<String> {
+    reqwest::Url::parse(url)
+        .ok()?
+        .host_str()
+        .map(ToOwned::to_owned)
+}
+
 /// A batch of HTTP ranges to download together
 #[derive(Debug, Default)]
 pub struct RangeBatch(Vec<MergedRange>);
@@ -94,8 +105,8 @@ pub struct RangeBatch(Vec<MergedRange>);
 impl RangeBatch {
     /// Try to add a range to this batch
     /// Returns true if added successfully, false if it would exceed the range or header limits
-    pub fn try_add(&mut self, range: MergedRange) -> bool {
-        if self.0.len() >= MAX_RANGES_PER_REQUEST {
+    pub fn try_add(&mut self, range: MergedRange, at_once: usize) -> bool {
+        if self.0.len() >= at_once {
             return false;
         }
         self.0.push(range);
@@ -129,6 +140,10 @@ impl fmt::Display for RangeBatch {
 pub struct Downloader {
     client: ClientWithMiddleware,
     semaphore: Semaphore,
+    /// How many ranges a host will answer at once, where it has refused more. The Chinese CDN
+    /// takes 32 and answers a 33rd with a 416 whatever their offsets, so what it bounds is the
+    /// count rather than the header's length.
+    at_once: Mutex<HashMap<String, usize>>,
 }
 
 impl Downloader {
@@ -161,7 +176,22 @@ impl Downloader {
         Ok(Self {
             client,
             semaphore: Semaphore::new(max_concurrent_downloads),
+            at_once: Mutex::default(),
         })
+    }
+
+    fn at_once(&self, url: &str) -> usize {
+        host(url)
+            .and_then(|host| self.at_once.lock().unwrap().get(&host).copied())
+            .unwrap_or(MAX_RANGES_PER_REQUEST)
+    }
+
+    fn serves_fewer(&self, url: &str, at_once: usize) {
+        if let Some(host) = host(url) {
+            let held = &mut *self.at_once.lock().unwrap();
+            let known = held.entry(host).or_insert(at_once);
+            *known = (*known).min(at_once);
+        }
     }
 
     pub fn get_patch_data<'a>(
@@ -203,10 +233,12 @@ impl Downloader {
             merged_ranges.push(MergedRange::new(patch_ref.clone()));
         }
 
+        let url = format!("{base_patch_url}/{version}.patch");
+        let at_once = self.at_once(&url);
         let mut range_batches: Vec<RangeBatch> = vec![];
         for range in merged_ranges {
             if let Some(last) = range_batches.last_mut()
-                && last.try_add(range.clone())
+                && last.try_add(range.clone(), at_once)
             {
                 continue;
             }
@@ -216,7 +248,7 @@ impl Downloader {
         let version = Arc::new(version.clone());
         let batch_streams = range_batches.into_iter().map(|batch| {
             let version = version.clone();
-            let url = format!("{base_patch_url}/{version}.patch");
+            let url = url.clone();
             async move {
                 let fetched = self.fetch_ranges(&url, &batch.0).await?;
                 Ok::<_, anyhow::Error>(stream::iter(
@@ -297,8 +329,26 @@ impl Downloader {
             .get(url)
             .header(header::RANGE, header)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+
+        // A host that will only serve so many ranges at once refuses the whole request, rather
+        // than answering with the ones it will serve. Every ref is in the patch it names, so the
+        // count is the only thing a refusal can be about: back off, remember it, and ask again.
+        if response.status() == StatusCode::RANGE_NOT_SATISFIABLE && ranges.len() > 1 {
+            drop(response);
+            drop(permit);
+            self.serves_fewer(url, ranges.len() * 4 / 5);
+            log::debug!("{url} refused {} ranges at once", ranges.len());
+            let mut parts = Vec::with_capacity(ranges.len());
+            let mut rest = ranges;
+            while !rest.is_empty() {
+                let (head, tail) = rest.split_at(self.at_once(url).min(rest.len()));
+                parts.extend(Box::pin(self.request_ranges(url, head)).await?);
+                rest = tail;
+            }
+            return Ok(parts);
+        }
+        let response = response.error_for_status()?;
 
         // A server that will not serve several ranges at once answers with the whole file rather
         // than a 206, which for a patch is tens of megabytes to reach a few kilobytes. The Korean
@@ -481,7 +531,10 @@ mod tests {
         let mut batch = RangeBatch(vec![]);
         let mut added = 0;
         for i in 0..10_000u64 {
-            if !batch.try_add(MergedRange::new(patch_ref(i * 1_000_000, 16))) {
+            if !batch.try_add(
+                MergedRange::new(patch_ref(i * 1_000_000, 16)),
+                MAX_RANGES_PER_REQUEST,
+            ) {
                 break;
             }
             added += 1;
