@@ -51,6 +51,15 @@ const OVERRIDES: OverrideTable = &[
     (
         "4e9a232b",
         &[
+            // Thaliak lists no prerequisite at all for these three, which is provably wrong: every
+            // one of their patches is an `FHDR`/`DIFF`, and a differential patch has something to
+            // apply on top of. Only four of the repository's 448 versions state none, and the
+            // fourth is the 2024.05.31 entry below, so this is the same defect recurring. Left
+            // unpatched, the forest for each is a single node and the CLUT built from it indexes
+            // that one delta: 8 KB and about 160 paths against the 7 MB a whole install takes.
+            ("2026.08.19.0000.0000", Some("2026.08.11.0000.0000")),
+            ("2026.08.31.0000.0000", Some("2026.08.19.0000.0000")),
+            ("2026.09.01.0000.0000", Some("2026.08.31.0000.0000")),
             // Thaliak incorrectly orders these hist patches.
             // aa comes after z. It's not lexicographically sorted.
             ("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000ag")),
@@ -374,6 +383,31 @@ mod tests {
             .into_iter()
             .map(|(version, _)| version.to_string())
             .collect()
+    }
+
+    /// The table is parsed lazily and panics on a malformed version, so nothing would catch a typo
+    /// until a real chain walked through it. Forcing it also pins the edges Thaliak leaves out.
+    #[test]
+    fn the_override_table_parses_and_names_the_missing_global_edges() {
+        let global = overrides_for("4e9a232b").expect("the global overrides");
+        let edge = |version: &str| {
+            global
+                .get(&GameVersion::new(version).unwrap())
+                .expect("an override")
+                .as_ref()
+                .map(ToString::to_string)
+        };
+        // Thaliak states no prerequisite for these three at all, and each is a `DIFF` patch, so
+        // each has to apply on top of the one before it.
+        assert_eq!(edge("2026.08.19.0000.0000").as_deref(), Some("2026.08.11.0000.0000"));
+        assert_eq!(edge("2026.08.31.0000.0000").as_deref(), Some("2026.08.19.0000.0000"));
+        assert_eq!(edge("2026.09.01.0000.0000").as_deref(), Some("2026.08.31.0000.0000"));
+        // The one entry that deliberately ends a lineage rather than pointing further back.
+        assert_eq!(edge("H2017.06.06.0000.0001a"), None);
+        // Every other repository's table parses too.
+        for (slug, _) in OVERRIDES {
+            assert!(overrides_for(slug).is_some(), "{slug} has no parsed overrides");
+        }
     }
 
     /// Taking a full install's forward-pointing prerequisites at face value sends a walk
