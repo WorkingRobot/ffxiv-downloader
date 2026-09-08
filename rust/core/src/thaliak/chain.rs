@@ -289,6 +289,19 @@ fn predecessor<'a>(
             .map(Some);
     }
 
+    // A lineage's own start is not a version with nothing before it: Thaliak states a full
+    // install's *successors* as its prerequisites, so the real root of the global game repository
+    // lists sixteen of them. A genuinely empty list is Thaliak having dropped the edge, and taking
+    // it at face value makes the version a root, which builds an index of that one patch and
+    // nothing before it. Refused here rather than published: an eight-kilobyte CLUT where a whole
+    // install takes seven megabytes reads as a working build.
+    ensure!(
+        !node.prerequisites.is_empty(),
+        "{slug} version {} states no prerequisite at all; Thaliak has dropped the edge, so name \
+         its predecessor in this module's override table",
+        node.version
+    );
+
     // Among the prerequisites, take the newest. An inactive version may still lead back
     // through inactive ones; an active one may not.
     Ok(node
@@ -383,6 +396,21 @@ mod tests {
             .into_iter()
             .map(|(version, _)| version.to_string())
             .collect()
+    }
+
+    /// Thaliak dropping an edge leaves a version with nothing before it, which taken at face value
+    /// makes it a root and builds an index of that one patch. Refused rather than published.
+    #[test]
+    fn a_version_with_no_prerequisite_at_all_is_refused() {
+        let mut nodes = lineage().to_vec();
+        nodes.push(node("2024.04.04.0000.0000", &[]));
+        let why = build_forest("slug", &nodes).expect_err("a dropped edge is not a lineage start");
+        assert!(
+            why.to_string().contains("states no prerequisite at all"),
+            "{why}"
+        );
+        // The real lineage start is not refused: it states its successors, which the walk discards.
+        assert!(build_forest("slug", &lineage()).is_ok());
     }
 
     /// The table is parsed lazily and panics on a malformed version, so nothing would catch a typo
