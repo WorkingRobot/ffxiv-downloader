@@ -152,6 +152,9 @@ const OVERRIDES: OverrideTable = &[
         "6b936f08",
         &[
             ("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000d")),
+            // Thaliak points this at the reset install's first part, so a chain through it
+            // applies the first and last and skips b and c.
+            ("2017.06.01.0000.0001", Some("H2017.06.01.0000.0001c")),
             // Thaliak's record of this repository begins at a HIST reset that discarded
             // everything before it, and half of what it does list no longer downloads. These
             // are the surviving patches, recovered by sweeping the CDN; the chain each one
