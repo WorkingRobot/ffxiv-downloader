@@ -215,17 +215,20 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
                     Some(false) => Status::Dead,
                     None => continue,
                 };
-                if source.status != status {
-                    changed += 1;
+                if source.status == status {
+                    continue;
                 }
                 source.status = status;
                 source.checked = stamp;
+                changed += 1;
             }
         }
         repository.validate()?;
-        let mut text = serde_json::to_string_pretty(&repository)?;
-        text.push('\n');
-        std::fs::write(&path, text)?;
+        if changed > 0 {
+            let mut text = serde_json::to_string_pretty(&repository)?;
+            text.push('\n');
+            std::fs::write(&path, text)?;
+        }
         let dead = repository
             .patches
             .iter()
