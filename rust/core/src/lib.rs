@@ -2,6 +2,8 @@ use std::io::{Cursor, Write};
 
 pub mod downloader;
 pub mod file;
+pub mod index;
+pub mod patch;
 pub mod thaliak;
 pub mod zipatch;
 
