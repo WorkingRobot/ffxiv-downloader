@@ -1,11 +1,15 @@
 mod cache;
 mod clut;
 mod diff;
+mod discover;
 mod download;
+mod index;
 mod lut;
 mod ops;
+mod poll;
 mod patcher;
 mod resource;
+mod verify;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;
@@ -66,6 +70,14 @@ enum Commands {
     Lut(lut::LutArgs),
     /// Fold a chain of LUTs into a CLUT per game version
     Clut(clut::ClutArgs),
+    /// Build and check patch index files
+    Index(index::IndexArgs),
+    /// Read a repository's version check and record any new patches
+    Poll(poll::PollArgs),
+    /// Sweep the patch cdn for versions no listing offers
+    Discover(discover::DiscoverArgs),
+    /// Check that a chain supplies every entry its sqpack indexes point at
+    Verify(verify::VerifyArgs),
     /// Print a repository's version graph in the DOT language
     Graphviz {
         /// Repository slug to graph
@@ -177,6 +189,10 @@ async fn main() -> anyhow::Result<()> {
             let fetcher = Arc::new(Fetcher::new(cli.patch_override_path)?);
             clut::run(args, fetcher, &thaliak_client()?).await
         }
+        Commands::Index(args) => index::run(args, &thaliak_client()?).await,
+        Commands::Poll(args) => poll::run(args, &thaliak_client()?).await,
+        Commands::Discover(args) => discover::run(args, &thaliak_client()?).await,
+        Commands::Verify(args) => verify::run(args),
         Commands::Graphviz {
             slug,
             verify_existence,

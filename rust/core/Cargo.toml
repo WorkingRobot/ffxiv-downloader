@@ -17,6 +17,8 @@ reqwest-leaky-bucket = "0.5"
 reqwest-retry = "0.9"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jiff = { version = "0.2", features = ["serde"] }
 log = "0.4"
 bytes = "1"
 futures = "0.3"

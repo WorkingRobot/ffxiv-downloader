@@ -24,6 +24,7 @@ url = "2"
 either = "1"
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+jiff = { version = "0.2", features = ["serde"] }
 async-trait = "0.1"
 env_logger = "0.11"
 regex = "1"
