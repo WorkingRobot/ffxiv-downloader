@@ -89,7 +89,17 @@ const OVERRIDES: OverrideTable = &[
             ("2013.12.05.0001.0000", Some("2013.12.05.0000.0000")),
             ("2014.03.06.0000.0002", Some("2013.12.05.0001.0000")),
             ("2014.05.12.0000.0002", Some("2014.03.06.0000.0002")),
-            ("2014.05.27.0000.0000", Some("2014.05.12.0000.0002")),
+            // The from-scratch install of this version, which every later version roots at
+            // instead of replaying the line before it. Its indexes come out byte-identical
+            // to the delta route's.
+            ("2014.05.27.0000.0000", Some("H2014.05.27.0000.0000g")),
+            ("H2014.05.27.0000.0000g", Some("H2014.05.27.0000.0000f")),
+            ("H2014.05.27.0000.0000f", Some("H2014.05.27.0000.0000e")),
+            ("H2014.05.27.0000.0000e", Some("H2014.05.27.0000.0000d")),
+            ("H2014.05.27.0000.0000d", Some("H2014.05.27.0000.0000c")),
+            ("H2014.05.27.0000.0000c", Some("H2014.05.27.0000.0000b")),
+            ("H2014.05.27.0000.0000b", Some("H2014.05.27.0000.0000a")),
+            ("H2014.05.27.0000.0000a", None),
             ("2014.06.21.0000.0001", Some("2014.05.27.0000.0000")),
             ("2014.06.25.0000.0000", Some("2014.06.21.0000.0001")),
             ("2014.06.25.0001.0000", Some("2014.06.25.0000.0000")),
@@ -165,11 +175,22 @@ const OVERRIDES: OverrideTable = &[
             ("2015.05.26.0001.0000", Some("2015.05.26.0000.0000")),
             ("2015.07.03.0000.0002", Some("2015.05.26.0001.0000")),
             ("2015.08.20.0000.0001", Some("2015.07.03.0000.0002")),
-            ("2015.10.27.0000.0000", Some("2015.08.20.0000.0001")),
+            // The from-scratch install of this version, which every later version roots at
+            // instead of replaying the line before it. Its indexes come out byte-identical
+            // to the delta route's.
+            ("2015.10.27.0000.0000", Some("H2015.10.27.0000.0000b")),
+            ("H2015.10.27.0000.0000b", Some("H2015.10.27.0000.0000a")),
+            ("H2015.10.27.0000.0000a", None),
             ("2016.02.08.0000.0001", Some("2015.10.27.0000.0000")),
             ("2016.05.21.0000.0001", Some("2016.02.08.0000.0001")),
             ("2016.09.10.0000.0001", Some("2016.05.21.0000.0001")),
             ("2016.12.17.0000.0001", Some("2016.09.10.0000.0001")),
+                    // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.03.25.0000.0000", Some("2021.11.21.0000.0001")),
+            ("2022.03.27.0000.0000", Some("2022.03.25.0000.0000")),
         ],
     ),
     (
@@ -211,15 +232,40 @@ const OVERRIDES: OverrideTable = &[
             ("2024.05.25.0002.0000", Some("2024.05.25.0001.0000")),
             ("2024.05.25.0003.0000", Some("2024.05.25.0002.0000")),
             ("2024.05.30.0000.0001", Some("2024.05.25.0003.0000")),
+                    // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2021.12.14.0000.0001", Some("2021.11.17.0000.0001")),
+            ("2022.03.25.0000.0000", Some("2021.12.14.0000.0001")),
         ],
     ),
     (
         "859d0e24",
-        &[("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000g"))],
+        &[
+            ("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000g")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.03.27.0000.0000", Some("2022.03.25.0000.0001")),
+            ("2022.03.25.0000.0001", Some("2021.11.21.0000.0001")),
+            ("2019.04.02.0000.0000", None),  // install
+        ],
     ),
     (
         "1bf99b87",
-        &[("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000i"))],
+        &[
+            ("2024.05.31.0000.0000", Some("H2024.05.31.0000.0000i")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.04.02.0000.0000", Some("2022.04.01.0000.0001")),
+            ("2022.04.19.0000.0000", Some("2022.04.02.0000.0000")),
+            ("2022.04.01.0000.0001", Some("2022.03.25.0001.0000")),
+            ("2021.08.23.0000.0000", None),  // install
+        ],
     ),
     // Korea
     (
@@ -228,23 +274,69 @@ const OVERRIDES: OverrideTable = &[
             ("2024.11.02.0000.0000", Some("H2024.11.02.0000.0000ad")),
             ("H2024.11.02.0000.0000b", Some("H2024.11.02.0000.0000a")),
             ("H2024.11.02.0000.0000aa", Some("H2024.11.02.0000.0000z")),
+                    // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.04.18.0000.0001", Some("2022.04.11.0000.0001")),
+            ("2021.04.29.0000.0001", Some("2021.04.20.0000.0001")),
+            ("2021.04.30.0000.0000", None),  // install
+            ("2021.05.22.0000.0000", Some("2021.04.30.0000.0000")),
+            ("2022.04.19.0000.0000", None),  // install
+            ("2015.06.08.0000.0000", None),  // install
         ],
     ),
     (
         "573d8c07",
-        &[("2024.10.22.0002.0000", Some("H2024.10.22.0002.0000c"))],
+        &[
+            ("2024.10.22.0002.0000", Some("H2024.10.22.0002.0000c")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2016.04.05.0000.0000", None),  // install
+        ],
     ),
     (
         "ce34ddbd",
-        &[("2024.10.22.0003.0000", Some("H2024.10.22.0003.0000e"))],
+        &[
+            ("2024.10.22.0003.0000", Some("H2024.10.22.0003.0000e")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2017.09.04.0000.0000", None),  // install
+        ],
     ),
     (
         "b933ed2b",
-        &[("2024.11.02.0000.0000", Some("H2024.11.02.0000.0000f"))],
+        &[
+            ("2024.11.02.0000.0000", Some("H2024.11.02.0000.0000f")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2024.11.19.0000.0000", Some("2024.11.08.0000.0000")),
+            ("2019.08.21.0000.0000", None),  // install
+            ("2024.11.07.0000.0001", Some("H2024.11.02.0000.0000f")),
+            ("2024.11.08.0000.0000", Some("2024.11.07.0000.0001")),
+        ],
     ),
     (
         "27577888",
-        &[("2024.11.02.0000.0000", Some("H2024.11.02.0000.0000g"))],
+        &[
+            ("2024.11.02.0000.0000", Some("H2024.11.02.0000.0000g")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.04.09.0000.0000", Some("2022.04.08.0003.0000")),
+            ("2022.04.12.0000.0000", Some("2022.04.09.0000.0000")),
+            ("2024.11.07.0000.0001", Some("H2024.11.02.0000.0000g")),
+            ("2024.11.08.0000.0000", Some("2024.11.07.0000.0001")),
+            ("2024.11.19.0000.0000", Some("2024.11.08.0000.0000")),
+            ("2022.01.19.0000.0000", None),  // install
+        ],
     ),
     // China
     (
@@ -253,23 +345,110 @@ const OVERRIDES: OverrideTable = &[
             ("2024.09.09.0000.0000", Some("H2024.09.09.0000.0000ad")),
             ("H2024.09.09.0000.0000b", Some("H2024.09.09.0000.0000a")),
             ("H2024.09.09.0000.0000aa", Some("H2024.09.09.0000.0000z")),
+                    // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2014.03.24.0000.0000", None),
+            ("2024.09.14.0000.0001", Some("H2024.09.09.0000.0000ad")),
+            ("2024.09.16.0000.0000", Some("2024.09.14.0000.0001")),
         ],
     ),
     (
         "77420d17",
-        &[("2024.08.27.0002.0000", Some("H2024.08.27.0002.0000c"))],
+        &[
+            ("2024.08.27.0002.0000", Some("H2024.08.27.0002.0000c")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2015.09.04.0000.0000", None),  // install
+        ],
     ),
     (
         "ee4b5cad",
-        &[("2024.08.27.0003.0000", Some("H2024.08.27.0003.0000e"))],
+        &[
+            ("2024.08.27.0003.0000", Some("H2024.08.27.0003.0000e")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2017.06.20.0000.0000", None),  // install
+        ],
     ),
     (
         "994c6c3b",
-        &[("2024.09.09.0000.0000", Some("H2024.09.09.0000.0000f"))],
+        &[
+            ("2024.09.09.0000.0000", Some("H2024.09.09.0000.0000f")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2019.07.31.0000.0000", None),  // install
+            ("2024.09.16.0000.0000", Some("2024.09.14.0000.0001")),
+            ("2024.09.17.0000.0000", Some("2024.09.16.0000.0000")),
+            ("2024.10.08.0000.0001", Some("2024.09.17.0000.0000")),
+            ("2024.10.09.0000.0000", Some("2024.10.08.0000.0001")),
+            ("2024.09.14.0000.0001", Some("H2024.09.09.0000.0000f")),
+            ("2024.10.10.0000.0000", Some("2024.10.09.0000.0000")),
+        ],
     ),
     (
         "0728f998",
-        &[("2024.09.09.0000.0000", Some("H2024.09.09.0000.0000g"))],
+        &[
+            ("2024.09.09.0000.0000", Some("H2024.09.09.0000.0000g")),
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2022.01.19.0000.0000", None),  // install
+            ("2024.09.14.0000.0001", Some("H2024.09.09.0000.0000g")),
+            ("2024.09.16.0000.0000", Some("2024.09.14.0000.0001")),
+            ("2024.09.17.0000.0000", Some("2024.09.16.0000.0000")),
+            ("2024.10.08.0000.0001", Some("2024.09.17.0000.0000")),
+            ("2024.10.09.0000.0000", Some("2024.10.08.0000.0001")),
+            ("2024.10.10.0000.0000", Some("2024.10.09.0000.0000")),
+        ],
+    ),
+    (
+        "2b5cbc63",
+        &[
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2013.06.18.0000.0000", None),  // install
+        ],
+    ),
+    (
+        "5050481e",
+        &[
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2024.10.09.0000.0000", None),  // install
+        ],
+    ),
+    (
+        "6cfeab11",
+        &[
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2024.05.20.0000.0000", None),  // install
+        ],
+    ),
+    (
+        "702fc90e",
+        &[
+            // Thaliak states no prerequisite for these. Those marked install are full
+            // installs, confirmed by an FHDR with no add commands and only file writes, so
+            // they genuinely start a lineage; the rest are deltas whose edge was dropped and
+            // whose predecessor is the version immediately before them.
+            ("2024.08.19.0000.0000", None),  // install
+        ],
     ),
 ];
 
@@ -349,8 +528,43 @@ const EXTRA_VERSIONS: ExtraTable = &[(
         ),
         (
             "2014.05.27.0000.0000",
-            "http://patch-dl.ffxiv.com/game/4e9a232b/D2014.05.27.0000.0000.patch",
-            1_354_814_256,
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000h.patch",
+            139_297_031,
+        ),
+        (
+            "H2014.05.27.0000.0000a",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000a.patch",
+            1_499_383_758,
+        ),
+        (
+            "H2014.05.27.0000.0000b",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000b.patch",
+            1_499_220_273,
+        ),
+        (
+            "H2014.05.27.0000.0000c",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000c.patch",
+            1_498_992_741,
+        ),
+        (
+            "H2014.05.27.0000.0000d",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000d.patch",
+            1_499_594_145,
+        ),
+        (
+            "H2014.05.27.0000.0000e",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000e.patch",
+            1_499_632_220,
+        ),
+        (
+            "H2014.05.27.0000.0000f",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000f.patch",
+            1_499_274_206,
+        ),
+        (
+            "H2014.05.27.0000.0000g",
+            "http://patch-dl.ffxiv.com/game/4e9a232b/H2014.05.27.0000.0000g.patch",
+            1_499_155_300,
         ),
         (
             "2014.06.21.0000.0001",
@@ -664,8 +878,18 @@ const EXTRA_VERSIONS: ExtraTable = &[(
         ),
         (
             "2015.10.27.0000.0000",
-            "http://patch-dl.ffxiv.com/game/ex1/6b936f08/D2015.10.27.0000.0000.patch",
-            636_268_103,
+            "http://patch-dl.ffxiv.com/game/ex1/6b936f08/H2015.10.27.0000.0000c.patch",
+            537_937_126,
+        ),
+        (
+            "H2015.10.27.0000.0000a",
+            "http://patch-dl.ffxiv.com/game/ex1/6b936f08/H2015.10.27.0000.0000a.patch",
+            1_498_642_548,
+        ),
+        (
+            "H2015.10.27.0000.0000b",
+            "http://patch-dl.ffxiv.com/game/ex1/6b936f08/H2015.10.27.0000.0000b.patch",
+            1_499_638_689,
         ),
         (
             "2016.02.08.0000.0001",
