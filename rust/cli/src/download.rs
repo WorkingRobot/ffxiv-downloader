@@ -4,6 +4,7 @@ use crate::{
     diff::ClutDiff,
     ops::{FilteredFileOperations, PersistentFileOperations},
     patcher::ClutPatcher,
+    resource::Fetcher,
 };
 use anyhow::{Context, Result};
 use clap::Args;
@@ -84,13 +85,14 @@ impl From<DownloadConfigArgs> for DownloadConfig {
 /// Main download command implementation
 pub struct DownloadCommand {
     client: Client,
+    fetcher: Fetcher,
     config: DownloadConfig,
     regexes: Arc<Vec<Regex>>,
     cache: Option<CacheMetadata>,
 }
 
 impl DownloadCommand {
-    pub fn new(config: DownloadConfig) -> Result<Self> {
+    pub fn new(config: DownloadConfig, override_path: Option<PathBuf>) -> Result<Self> {
         // Compile regex patterns
         let regexes = config
             .file_patterns
@@ -105,6 +107,7 @@ impl DownloadCommand {
                 .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
                 .build()
                 .context("Failed to create HTTP client")?,
+            fetcher: Fetcher::new(override_path)?,
             regexes: Arc::new(regexes),
             cache: if config.use_cache {
                 let mut cache = CacheMetadata::load(&config.output_path)?;
@@ -254,7 +257,10 @@ impl DownloadCommand {
             "{}/{}/{}.clut",
             self.config.clut_path, self.config.slug, version
         );
-        let clut_bytes = self.client.get(&clut_url).send().await?.bytes().await?;
+        let clut_bytes = self
+            .fetcher
+            .bytes(&clut_url, &version.to_string(), "clut")
+            .await?;
         LazyClut::read(Cursor::new(clut_bytes))
             .with_context(|| format!("Failed to read CLUT from {clut_url}"))
     }

@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::TestClut { directory } => test_clut_files(&directory),
         Commands::Download { config_args } => {
-            let mut download_cmd = DownloadCommand::new(config_args.into())?;
+            let mut download_cmd = DownloadCommand::new(config_args.into(), cli.patch_override_path)?;
             let (version, updated) = download_cmd.run().await?;
             if cli.gha
                 && let Some(outputs_path) = std::env::var_os("GITHUB_OUTPUT")
