@@ -1,18 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
-use reqwest::header::{HeaderValue, RANGE, USER_AGENT};
+use reqwest::header::{HeaderValue, USER_AGENT};
 use xiv_core::file::version::GameVersion;
-use xiv_core::index::{
-    Discovered, DiscoveryMethod, Header, Origin, PatchEntry, PatchType, Region, Registry,
-    REGISTRY_SCHEMA, REPOSITORY_SCHEMA, Repository, RepositoryRef, Source, Status, now,
-};
-use xiv_core::thaliak::chain::get_patch_forest;
-use xiv_core::thaliak::get_repository_metadata;
+use xiv_core::index::{Header, Origin, PatchType, Region, Repository, Source, Status, now};
 
 const PATCHER_AGENT: &str = "FFXIV PATCH CLIENT";
 const MAGIC: [u8; 12] = *b"\x91ZIPATCH\r\n\x1a\n";
@@ -26,12 +21,8 @@ pub struct IndexArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum IndexCommand {
-    /// Seed repository files from the current chain source
-    Build(BuildArgs),
     /// Check committed repository files against the schema
     Check(CheckArgs),
-    /// Compare committed repository files against the live chain source
-    Diff(CheckArgs),
     /// Check every recorded source and record whether it still downloads
     Liveness(LivenessArgs),
     /// Attach an archive.org item as a fallback source
@@ -62,22 +53,6 @@ pub struct LivenessArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-pub struct BuildArgs {
-    /// Repository slugs to build, in the form slug=region
-    #[arg(short, long, value_name = "SLUG=REGION", num_args = 1..)]
-    pub slug: Vec<String>,
-    /// Directory to write repository files to
-    #[arg(short, long, value_name = "DIR", default_value = ".")]
-    pub output_path: PathBuf,
-    /// Number of patch headers to read at once
-    #[arg(short, long, value_name = "NUM", default_value_t = 8)]
-    pub parallelism: usize,
-    /// Read patch headers to classify and check every patch
-    #[arg(long, value_name = "BOOL", default_value_t = true, num_args = 0..=1)]
-    pub headers: bool,
-}
-
-#[derive(Args, Debug, Clone)]
 pub struct CheckArgs {
     /// Directory holding repository files
     #[arg(short, long, value_name = "DIR", default_value = ".")]
@@ -86,9 +61,7 @@ pub struct CheckArgs {
 
 pub async fn run(args: IndexArgs, client: &Client) -> Result<()> {
     match args.command {
-        IndexCommand::Build(args) => build(args, client).await,
         IndexCommand::Check(args) => check(args),
-        IndexCommand::Diff(args) => diff(args, client).await,
         IndexCommand::Liveness(args) => liveness(args, client).await,
         IndexCommand::Archive(args) => archive(args, client).await,
     }
@@ -189,8 +162,8 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
 
         let urls: Vec<String> = repository
             .patches
-            .iter()
-            .flat_map(|(_, entry)| entry.sources.values().map(|source| source.url.clone()))
+            .values()
+            .flat_map(|entry| entry.sources.values().map(|source| source.url.clone()))
             .collect();
         let alive: BTreeMap<String, bool> = stream::iter(urls.into_iter().map(|url| async move {
             let ok = client
@@ -243,213 +216,6 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
     Ok(())
 }
 
-async fn diff(args: CheckArgs, client: &Client) -> Result<()> {
-    let mut mismatched = 0;
-    for path in repository_files(&args.path)? {
-        let text = std::fs::read_to_string(&path)?;
-        let repository: Repository = serde_json::from_str(&text)?;
-        let mine: BTreeMap<String, (String, i64, Option<String>)> = repository
-            .forest()?
-            .into_iter()
-            .map(|step| {
-                (
-                    step.version.to_string(),
-                    (
-                        step.patch.url,
-                        step.patch.size,
-                        step.parent.map(|parent| parent.to_string()),
-                    ),
-                )
-            })
-            .collect();
-
-        let theirs: BTreeMap<String, (String, i64, Option<String>)> =
-            match get_patch_forest(client, &repository.slug).await {
-                Ok(steps) => steps
-                    .into_iter()
-                    .map(|step| {
-                        (
-                            step.version.to_string(),
-                            (
-                                step.patch.url,
-                                step.patch.size,
-                                step.parent.map(|parent| parent.to_string()),
-                            ),
-                        )
-                    })
-                    .collect(),
-                Err(error) => {
-                    log::warn!("{}: source unavailable: {error}", repository.slug);
-                    continue;
-                }
-            };
-
-        let mut differences = 0;
-        for version in mine.keys().chain(theirs.keys()).collect::<BTreeSet<_>>() {
-            if mine.get(version) != theirs.get(version) {
-                differences += 1;
-                if differences <= 5 {
-                    log::warn!(
-                        "{} {version}: index {:?} source {:?}",
-                        repository.slug,
-                        mine.get(version),
-                        theirs.get(version)
-                    );
-                }
-            }
-        }
-        if differences == 0 {
-            log::info!("{}: {} versions identical", repository.slug, mine.len());
-        } else {
-            mismatched += 1;
-            log::error!("{}: {differences} versions differ", repository.slug);
-        }
-    }
-    if mismatched > 0 {
-        anyhow::bail!("{mismatched} repositories differ from the live chain source");
-    }
-    Ok(())
-}
-
-pub fn repository_files(root: &std::path::Path) -> Result<Vec<PathBuf>> {
-    let path = if root.join("repos").is_dir() {
-        root.join("repos")
-    } else {
-        root.to_path_buf()
-    };
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(&path).with_context(|| format!("reading {}", path.display()))? {
-        let path = entry?.path();
-        if is_repository_file(&path) {
-            files.push(path);
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
-async fn build(args: BuildArgs, client: &Client) -> Result<()> {
-    std::fs::create_dir_all(&args.output_path)
-        .with_context(|| format!("creating {}", args.output_path.display()))?;
-
-    let mut refs = Vec::new();
-    for spec in &args.slug {
-        let (slug, region) = parse_slug(spec)?;
-        let repository = build_one(client, &slug, region, &args).await?;
-        refs.push(RepositoryRef {
-            slug: repository.slug.clone(),
-            name: repository.name.clone(),
-            region: repository.region,
-            latest: repository.latest.clone(),
-        });
-        write_json(&repos_dir(&args.output_path)?.join(format!("{slug}.json")), &repository)?;
-        log::info!(
-            "{slug}: {} patches, latest {}",
-            repository.patches.len(),
-            repository.latest
-        );
-    }
-
-    refs.sort_by(|a, b| a.slug.cmp(&b.slug));
-    write_json(
-        &args.output_path.join("repositories.json"),
-        &Registry {
-            schema: REGISTRY_SCHEMA.to_string(),
-            repositories: refs,
-        },
-    )
-}
-
-async fn build_one(
-    client: &Client,
-    slug: &str,
-    region: Region,
-    args: &BuildArgs,
-) -> Result<Repository> {
-    let meta = get_repository_metadata(client, slug).await?;
-    let steps = get_patch_forest(client, slug).await?;
-    let stamp = now();
-
-    let headers: BTreeMap<String, Option<(Header, bool)>> = if args.headers {
-        stream::iter(steps.iter().map(|step| {
-            let url = step.patch.url.clone();
-            async move { (url.clone(), read_header(client, &url).await) }
-        }))
-        .buffer_unordered(args.parallelism)
-        .collect()
-        .await
-    } else {
-        BTreeMap::new()
-    };
-
-    let patches = steps
-        .into_iter()
-        .map(|step| {
-            let probed = headers.get(&step.patch.url).cloned().flatten();
-            let (header, alive) = match probed {
-                Some((header, alive)) => (Some(header), alive),
-                None => (None, false),
-            };
-            (
-                step.version,
-                PatchEntry {
-                    prev: step.parent,
-                    size: step.patch.size,
-                    header,
-                    sources: BTreeMap::from([(
-                        Origin::Cdn,
-                        Source {
-                            url: step.patch.url,
-                            status: if !args.headers {
-                                Status::Unchecked
-                            } else if alive {
-                                Status::Alive
-                            } else {
-                                Status::Dead
-                            },
-                            checked: stamp,
-                        },
-                    )]),
-                    discovered: Discovered {
-                        at: stamp,
-                        method: DiscoveryMethod::ThaliakSeed,
-                    },
-                    verified: None,
-                },
-            )
-        })
-        .collect();
-
-    let repository = Repository {
-        schema: REPOSITORY_SCHEMA.to_string(),
-        slug: slug.to_string(),
-        name: meta.name,
-        region,
-        latest: GameVersion::new(&meta.latest_version.version_string)?,
-        patches,
-    };
-    repository.validate()?;
-    Ok(repository)
-}
-
-async fn read_header(client: &Client, url: &str) -> Option<(Header, bool)> {
-    let response = client
-        .get(url)
-        .header(USER_AGENT, HeaderValue::from_static(PATCHER_AGENT))
-        .header(
-            RANGE,
-            HeaderValue::from_str(&format!("bytes=0-{}", HEADER_BYTES - 1)).ok()?,
-        )
-        .send()
-        .await
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let body = response.bytes().await.ok()?;
-    Some((parse_header(&body)?, true))
-}
-
 pub fn parse_header(body: &[u8]) -> Option<Header> {
     if body.len() < HEADER_BYTES || body[..MAGIC.len()] != MAGIC {
         return None;
@@ -493,6 +259,23 @@ fn check(args: CheckArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn repository_files(root: &std::path::Path) -> Result<Vec<PathBuf>> {
+    let path = if root.join("repos").is_dir() {
+        root.join("repos")
+    } else {
+        root.to_path_buf()
+    };
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&path).with_context(|| format!("reading {}", path.display()))? {
+        let path = entry?.path();
+        if is_repository_file(&path) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 pub fn repos_dir(root: &std::path::Path) -> Result<PathBuf> {
     let dir = root.join("repos");
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -504,12 +287,6 @@ pub fn is_repository_file(path: &std::path::Path) -> bool {
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| stem.len() == 8 && stem.chars().all(|c| c.is_ascii_hexdigit()))
         && path.extension().is_some_and(|ext| ext == "json")
-}
-
-fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
-    let mut text = serde_json::to_string_pretty(value)?;
-    text.push('\n');
-    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
 pub fn parse_region(region: &str) -> Result<Region> {

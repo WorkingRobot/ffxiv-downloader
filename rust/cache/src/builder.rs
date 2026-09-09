@@ -11,6 +11,7 @@ pub struct ServerBuilder {
     pub(super) clut_ram_bytes: u64,
     pub(super) batch_window_ms: u64,
     pub(super) clut_tti_secs: u64,
+    pub(super) index_path: String,
     pub(super) slug_update_interval_secs: u64,
     pub(super) clut_index_interval_secs: u64,
     pub(super) ram_entry_capacity: usize,
@@ -52,6 +53,11 @@ impl ServerBuilder {
     }
 
     /// Interval in seconds to update repositories from Thaliak
+    pub fn index_path(mut self, path: impl Into<String>) -> Self {
+        self.index_path = path.into();
+        self
+    }
+
     pub fn slug_update_interval_secs(mut self, secs: u64) -> Self {
         self.slug_update_interval_secs = secs;
         self
@@ -131,6 +137,7 @@ impl Default for ServerBuilder {
             clut_ram_bytes: 512 << 20, // 512 MiB of parsed CLUTs
             batch_window_ms: 20,
             clut_tti_secs: 30 * 60,            // 30 minutes
+            index_path: xiv_core::index::DEFAULT_INDEX.to_string(),
             slug_update_interval_secs: 60,     // 1 minute
             clut_index_interval_secs: 60 * 60, // 1 hour
             ram_entry_capacity: 16384,         // 16k "entries" in RAM

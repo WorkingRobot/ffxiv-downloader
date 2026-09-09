@@ -39,7 +39,6 @@ use xiv_core::{
         slug::Slug,
         version::{GameVersion, PatchVersion},
     },
-    thaliak::get_all_repositories,
 };
 
 /// Docker's default seccomp profile can deny `io_uring_setup`; probe a throwaway ring
@@ -161,6 +160,7 @@ pub struct Server(Arc<ServerImpl>);
 struct ServerImpl {
     cache: HybridCache<CacheKey, CacheValue>,
     http_client: Client,
+    index_path: String,
 
     downloader: Downloader,
 
@@ -189,6 +189,7 @@ pub struct BatchPatchRequest {
 impl Server {
     pub(super) async fn new(builder: ServerBuilder) -> Result<Self> {
         let ServerBuilder {
+            index_path,
             clut_path,
             clut_ram_bytes,
             batch_window_ms,
@@ -278,6 +279,7 @@ impl Server {
         let this = Self(Arc::new(ServerImpl {
             cache,
             http_client,
+            index_path,
             downloader,
             clut_path,
             clut_cache,
@@ -440,32 +442,39 @@ impl Server {
     }
 
     pub async fn update_slugs(&self) -> Result<()> {
-        let repos = get_all_repositories(&self.0.http_client).await?;
+        let registry =
+            xiv_core::index::fetch_registry(&self.0.http_client, &self.0.index_path).await?;
 
-        let known = repos
+        let known = registry
+            .repositories
             .iter()
             .map(|repo| Slug::from_str(&repo.slug))
             .collect::<std::result::Result<Vec<_>, _>>()?;
         self.refresh_clut_index(&known).await;
 
         let mut slugs = Vec::new();
-        for repo in repos {
-            let slug = Slug::from_str(&repo.slug)?;
-            let latest_patch =
-                repo.latest_version.patches.first().ok_or_else(|| {
-                    anyhow::anyhow!("No patches found for repository: {}", repo.slug)
-                })?;
+        for entry in registry.repositories {
+            let slug = Slug::from_str(&entry.slug)?;
+            let repository = xiv_core::index::fetch_repository(
+                &self.0.http_client,
+                &self.0.index_path,
+                &entry.slug,
+            )
+            .await?;
+            let newest = repository
+                .patches
+                .values()
+                .next_back()
+                .and_then(|patch| patch.preferred())
+                .ok_or_else(|| anyhow::anyhow!("No patches found for repository: {}", entry.slug))?;
             let base_patch_url = {
-                let mut patch_url = latest_patch.url.parse::<Url>()?;
+                let mut patch_url = newest.url.parse::<Url>()?;
                 patch_url
                     .path_segments_mut()
-                    .map_err(|_| {
-                        anyhow::anyhow!("Failed to parse patch URL: {}", latest_patch.url)
-                    })?
+                    .map_err(|_| anyhow::anyhow!("Failed to parse patch URL: {}", newest.url))?
                     .pop();
                 patch_url.to_string()
             };
-            let latest_version = GameVersion::new(&repo.latest_version.version_string)?;
             let served = self
                 .0
                 .clut_index
@@ -476,29 +485,17 @@ impl Server {
                 .cloned();
             // A version can only be read if a CLUT was built for it, which covers the
             // lineages the current patch chain has left behind as well as the one it is
-            // on. Without a listing to go by, fall back to what the chain still offers.
+            // on. Without a listing to go by, fall back to what the index records.
             let versions = match served {
                 Some(served) => served,
-                None => {
-                    let mut versions = repo
-                        .versions
-                        .into_iter()
-                        .filter(|v| v.is_active)
-                        .map(|v| {
-                            GameVersion::new(&v.version_string)
-                                .context(format!("Invalid version string: {}", v.version_string))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    versions.sort();
-                    versions
-                }
+                None => repository.patches.keys().cloned().collect(),
             };
 
             let slug_data = SlugData {
                 base_patch_url,
-                repository: repo.name,
+                repository: repository.name,
                 versions,
-                latest_version,
+                latest_version: repository.latest,
             };
 
             self.0

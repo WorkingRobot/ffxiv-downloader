@@ -9,8 +9,8 @@ use reqwest::Client;
 use tokio_util::io::SyncIoBridge;
 use xiv_core::file::lut::Lut;
 use xiv_core::file::version::{GameVersion, PatchVersion};
-use xiv_core::thaliak::chain::{Patch, get_patch_chain, get_patch_forest};
-use xiv_core::thaliak::get_repository_metadata;
+use xiv_core::index::fetch_repository;
+use xiv_core::patch::Patch;
 use xiv_core::zipatch::ZiPatch;
 
 use crate::Compression;
@@ -44,7 +44,12 @@ pub struct LutArgs {
     pub force: bool,
 }
 
-pub async fn run(args: LutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Result<()> {
+pub async fn run(
+    args: LutArgs,
+    fetcher: Arc<Fetcher>,
+    client: &Client,
+    index_path: &str,
+) -> Result<()> {
     let output = args
         .output_path
         .clone()
@@ -52,7 +57,7 @@ pub async fn run(args: LutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resul
     std::fs::create_dir_all(&output).with_context(|| format!("creating {}", output.display()))?;
     log::info!("Output Path: {}", output.display());
 
-    let mut chain = resolve_chain(client, &args).await?;
+    let mut chain = resolve_chain(client, &args, index_path).await?;
 
     if !args.force {
         chain.retain(|(_, patch)| {
@@ -154,7 +159,11 @@ async fn read_chunks(
 }
 
 /// The patches to process, either the explicit list or the chain leading to a version.
-pub async fn resolve_chain(client: &Client, args: &LutArgs) -> Result<Vec<(GameVersion, Patch)>> {
+pub async fn resolve_chain(
+    client: &Client,
+    args: &LutArgs,
+    index_path: &str,
+) -> Result<Vec<(GameVersion, Patch)>> {
     if !args.urls.is_empty() {
         return args
             .urls
@@ -178,28 +187,24 @@ pub async fn resolve_chain(client: &Client, args: &LutArgs) -> Result<Vec<(GameV
             .collect();
     }
 
+    let repository = fetch_repository(client, index_path, &args.slug).await?;
+    log::debug!("Repository:");
+    log::debug!("  Slug: {}", repository.slug);
+    log::debug!("  Name: {}", repository.name);
+    log::debug!("  Latest Version: {}", repository.latest);
+
     if args.all_versions {
-        log::debug!("Downloading version graph");
-        return Ok(get_patch_forest(client, &args.slug)
-            .await?
+        return Ok(repository
+            .forest()?
             .into_iter()
             .map(|step| (step.version, step.patch))
             .collect());
     }
 
-    let meta = get_repository_metadata(client, &args.slug).await?;
-    log::debug!("Repository:");
-    log::debug!("  Slug: {}", args.slug);
-    log::debug!("  Name: {}", meta.name);
-    log::debug!("  Description: {}", meta.description.unwrap_or_default());
-    log::debug!("  Latest Version: {}", meta.latest_version.version_string);
-
     let version = match &args.version {
         Some(version) if !version.is_empty() => GameVersion::new(version)?,
-        _ => GameVersion::new(&meta.latest_version.version_string)?,
+        _ => repository.latest.clone(),
     };
     log::info!("Using version {version}");
-
-    log::debug!("Downloading patch chain");
-    get_patch_chain(client, &args.slug, &version).await
+    repository.chain(&version)
 }

@@ -4,7 +4,6 @@ pub mod downloader;
 pub mod file;
 pub mod index;
 pub mod patch;
-pub mod thaliak;
 pub mod zipatch;
 
 pub fn create_empty_file_block(block_count: i64) -> Vec<u8> {

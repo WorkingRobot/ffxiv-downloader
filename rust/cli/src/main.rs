@@ -51,6 +51,10 @@ struct Cli {
     /// Directory to read patch, LUT and CLUT files from instead of downloading them.
     #[arg(long, global = true, value_name = "DIR")]
     patch_override_path: Option<PathBuf>,
+
+    /// Directory or base url holding the patch index.
+    #[arg(long, global = true, value_name = "PATH", default_value = xiv_core::index::DEFAULT_INDEX)]
+    index_path: String,
 }
 
 #[derive(Subcommand)]
@@ -169,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::TestClut { directory } => test_clut_files(&directory),
         Commands::Download { config_args } => {
-            let mut download_cmd = DownloadCommand::new(config_args.into(), cli.patch_override_path)?;
+            let mut download_cmd = DownloadCommand::new(config_args.into(), cli.patch_override_path, &cli.index_path)?;
             let (version, updated) = download_cmd.run().await?;
             if cli.gha
                 && let Some(outputs_path) = std::env::var_os("GITHUB_OUTPUT")
@@ -183,35 +187,31 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Lut(args) => {
             let fetcher = Arc::new(Fetcher::new(cli.patch_override_path)?);
-            lut::run(args, fetcher, &thaliak_client()?).await
+            lut::run(args, fetcher, &http_client()?, &cli.index_path).await
         }
         Commands::Clut(args) => {
             let fetcher = Arc::new(Fetcher::new(cli.patch_override_path)?);
-            clut::run(args, fetcher, &thaliak_client()?).await
+            clut::run(args, fetcher, &http_client()?, &cli.index_path).await
         }
-        Commands::Index(args) => index::run(args, &thaliak_client()?).await,
-        Commands::Poll(args) => poll::run(args, &thaliak_client()?).await,
-        Commands::Discover(args) => discover::run(args, &thaliak_client()?).await,
+        Commands::Index(args) => index::run(args, &http_client()?).await,
+        Commands::Poll(args) => poll::run(args, &http_client()?).await,
+        Commands::Discover(args) => discover::run(args, &http_client()?).await,
         Commands::Verify(args) => verify::run(args),
         Commands::Graphviz {
             slug,
             verify_existence,
             active,
         } => {
-            let tree = xiv_core::thaliak::graphviz::get_graphviz_tree(
-                &thaliak_client()?,
-                &slug,
-                verify_existence,
-                active,
-            )
-            .await?;
-            print!("{tree}");
+            let _ = (verify_existence, active);
+            let repository =
+                xiv_core::index::fetch_repository(&http_client()?, &cli.index_path, &slug).await?;
+            print!("{}", repository.graphviz());
             Ok(())
         }
     }
 }
 
-fn thaliak_client() -> anyhow::Result<reqwest::Client> {
+fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent(format!("{}/{}", build::PROJECT_NAME, build::PKG_VERSION))
         .build()?)

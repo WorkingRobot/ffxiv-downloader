@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::file::version::GameVersion;
 use crate::patch::{Patch, Step};
 
+pub const DEFAULT_INDEX: &str =
+    "https://raw.githubusercontent.com/WorkingRobot/ffxiv-patches/refs/heads/main";
 pub const SCHEMA_BASE: &str =
     "https://raw.githubusercontent.com/WorkingRobot/ffxiv-patches/main/schema";
 pub const REPOSITORY_SCHEMA: &str =
@@ -82,6 +84,40 @@ pub struct Source {
     pub url: String,
     pub status: Status,
     pub checked: Timestamp,
+}
+
+pub async fn fetch_registry(client: &reqwest::Client, base: &str) -> Result<Registry> {
+    let text = fetch(client, base, "repositories.json").await?;
+    serde_json::from_str(&text).with_context(|| format!("parsing repositories.json from {base}"))
+}
+
+pub async fn fetch_repository(
+    client: &reqwest::Client,
+    base: &str,
+    slug: &str,
+) -> Result<Repository> {
+    let text = fetch(client, base, &format!("repos/{slug}.json")).await?;
+    let repository: Repository = serde_json::from_str(&text)
+        .with_context(|| format!("parsing repos/{slug}.json from {base}"))?;
+    repository.validate()?;
+    Ok(repository)
+}
+
+async fn fetch(client: &reqwest::Client, base: &str, name: &str) -> Result<String> {
+    let local = std::path::Path::new(base).join(name);
+    if local.exists() {
+        return std::fs::read_to_string(&local)
+            .with_context(|| format!("reading {}", local.display()));
+    }
+    let url = format!("{}/{name}", base.trim_end_matches('/'));
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("fetching {url}"))?
+        .error_for_status()
+        .with_context(|| format!("fetching {url}"))?;
+    Ok(response.text().await?)
 }
 
 pub fn now() -> Timestamp {
@@ -191,6 +227,31 @@ impl Repository {
                 })
             })
             .collect()
+    }
+
+    pub fn graphviz(&self) -> String {
+        let mut out = String::from("digraph {\n");
+        let index: BTreeMap<&GameVersion, usize> =
+            self.patches.keys().enumerate().map(|(i, v)| (v, i)).collect();
+        for (version, entry) in &self.patches {
+            let fill = match entry.preferred().map(|source| source.status) {
+                Some(Status::Alive) => "lightgreen",
+                Some(Status::Dead) => "darkred",
+                _ => "yellow",
+            };
+            let font = if fill == "darkred" { "white" } else { "black" };
+            let idx = index[version];
+            out.push_str(&format!(
+                "  Idx{idx} [ label = \"{version}\" style = filled fillcolor = {fill} fontcolor = {font} ]\n"
+            ));
+            if let Some(prev) = &entry.prev
+                && let Some(parent) = index.get(prev)
+            {
+                out.push_str(&format!("  Idx{idx} -> Idx{parent}\n"));
+            }
+        }
+        out.push_str("}\n");
+        out
     }
 
     pub fn validate(&self) -> Result<()> {

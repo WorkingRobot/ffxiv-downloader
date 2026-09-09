@@ -15,7 +15,8 @@ use xiv_core::file::header::Header;
 use xiv_core::file::lut::Lut;
 use xiv_core::file::types::{CompressType, PlatformId, Version};
 use xiv_core::file::version::GameVersion;
-use xiv_core::thaliak::chain::{Patch, Step, get_patch_forest};
+use xiv_core::index::fetch_repository;
+use xiv_core::patch::{Patch, Step};
 
 use crate::Compression;
 use crate::lut::{LutArgs, resolve_chain};
@@ -60,7 +61,12 @@ pub struct ClutArgs {
     pub force: bool,
 }
 
-pub async fn run(args: ClutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Result<()> {
+pub async fn run(
+    args: ClutArgs,
+    fetcher: Arc<Fetcher>,
+    client: &Client,
+    index_path: &str,
+) -> Result<()> {
     let format = match args.clut_version {
         2 => Version::SeparateVersioning,
         3 => Version::Indexed,
@@ -99,7 +105,9 @@ pub async fn run(args: ClutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resu
     }
 
     if args.all_versions {
-        let steps = get_patch_forest(client, &args.slug).await?;
+        let steps = fetch_repository(client, index_path, &args.slug)
+            .await?
+            .forest()?;
         return fold.walk(header, steps).await;
     }
 
@@ -115,6 +123,7 @@ pub async fn run(args: ClutArgs, fetcher: Arc<Fetcher>, client: &Client) -> Resu
             compression: args.compression,
             force: false,
         },
+        index_path,
     )
     .await?;
 

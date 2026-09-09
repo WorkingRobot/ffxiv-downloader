@@ -15,7 +15,7 @@ use std::{path::PathBuf, sync::Arc};
 use url::Url;
 use xiv_core::{
     file::{clut_lazy::LazyClut, version::GameVersion},
-    thaliak::get_repository_metadata,
+    index::fetch_repository,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -55,6 +55,7 @@ pub struct DownloadConfigArgs {
 #[derive(Debug, Clone)]
 pub struct DownloadConfig {
     pub slug: String,
+    pub index_path: String,
     pub clut_path: String,
     pub version: Option<String>,
     pub output_path: PathBuf,
@@ -69,6 +70,7 @@ impl From<DownloadConfigArgs> for DownloadConfig {
         let parallelism = args.parallelism.unwrap_or(num_cpus::get());
         Self {
             slug: args.slug,
+            index_path: String::new(),
             clut_path: args.clut_path,
             version: args.version.filter(|v| !v.is_empty()),
             output_path: args
@@ -92,7 +94,8 @@ pub struct DownloadCommand {
 }
 
 impl DownloadCommand {
-    pub fn new(config: DownloadConfig, override_path: Option<PathBuf>) -> Result<Self> {
+    pub fn new(mut config: DownloadConfig, override_path: Option<PathBuf>, index_path: &str) -> Result<Self> {
+        config.index_path = index_path.to_string();
         // Compile regex patterns
         let regexes = config
             .file_patterns
@@ -142,12 +145,12 @@ impl DownloadCommand {
             log::info!("File Filter: {:?}", self.config.file_patterns);
         }
 
-        let meta = get_repository_metadata(&self.client, &self.config.slug).await?;
-        let latest_version = GameVersion::new(&meta.latest_version.version_string)?;
+        let repository =
+            fetch_repository(&self.client, &self.config.index_path, &self.config.slug).await?;
+        let latest_version = repository.latest.clone();
         log::info!("Repository:");
         log::info!("  Slug: {}", self.config.slug);
-        log::info!("  Name: {}", meta.name);
-        log::info!("  Description: {}", meta.description.unwrap_or_default());
+        log::info!("  Name: {}", repository.name);
         log::info!("  Latest Version: {latest_version}");
 
         let target_version = if let Some(ref version) = self.config.version {
@@ -212,11 +215,16 @@ impl DownloadCommand {
         drop(target_clut);
         drop(source_clut);
 
-        if let Some(patch) = meta.latest_version.patches.first() {
-            let mut patch_url = patch.url.parse::<Url>()?;
+        if let Some(source) = repository
+            .patches
+            .values()
+            .next_back()
+            .and_then(|entry| entry.preferred())
+        {
+            let mut patch_url = source.url.parse::<Url>()?;
             patch_url
                 .path_segments_mut()
-                .map_err(|_| anyhow::anyhow!("Failed to parse patch URL: {}", patch.url))?
+                .map_err(|_| anyhow::anyhow!("Failed to parse patch URL: {}", source.url))?
                 .pop();
             diff.provide_base_patch_url(&patch_url);
         }
