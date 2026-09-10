@@ -86,6 +86,57 @@ pub struct Source {
     pub checked: Timestamp,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataEntry {
+    pub version: String,
+    pub tagline: Option<String>,
+    pub released: Option<Timestamp>,
+    pub lodestone: Option<String>,
+    pub patch_notes: Option<String>,
+    pub repositories: BTreeMap<String, GameVersion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Metadata {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    pub patches: BTreeMap<GameVersion, MetadataEntry>,
+}
+
+impl Metadata {
+    /// The entry naming `version`, whichever repository it belongs to.
+    pub fn describe(&self, version: &GameVersion) -> Option<&MetadataEntry> {
+        self.patches.get(version).or_else(|| {
+            self.patches
+                .values()
+                .find(|entry| entry.repositories.values().any(|known| known == version))
+        })
+    }
+
+    pub fn label(&self, version: &GameVersion) -> Option<String> {
+        let entry = self.describe(version)?;
+        Some(match &entry.tagline {
+            Some(tagline) => format!("{} - {tagline}", entry.version),
+            None => entry.version.clone(),
+        })
+    }
+}
+
+pub async fn fetch_metadata(
+    client: &reqwest::Client,
+    base: &str,
+    region: Region,
+) -> Result<Metadata> {
+    let name = match region {
+        Region::Global => "global",
+        Region::Korea => "korea",
+        Region::China => "china",
+        Region::Taiwan => "taiwan",
+    };
+    let text = fetch(client, base, &format!("metadata/{name}.json")).await?;
+    serde_json::from_str(&text).with_context(|| format!("parsing metadata/{name}.json from {base}"))
+}
+
 pub async fn fetch_registry(client: &reqwest::Client, base: &str) -> Result<Registry> {
     let text = fetch(client, base, "repositories.json").await?;
     serde_json::from_str(&text).with_context(|| format!("parsing repositories.json from {base}"))
