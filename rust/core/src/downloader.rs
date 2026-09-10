@@ -334,10 +334,17 @@ impl Downloader {
         // A host that will only serve so many ranges at once refuses the whole request, rather
         // than answering with the ones it will serve. Every ref is in the patch it names, so the
         // count is the only thing a refusal can be about: back off, remember it, and ask again.
-        if response.status() == StatusCode::RANGE_NOT_SATISFIABLE && ranges.len() > 1 {
+        // The Taiwanese CDN refuses with 503 instead, and only for ranges past a point that
+        // varies by file, so nothing smaller than one range at a time is dependably served.
+        let refused = match response.status() {
+            StatusCode::RANGE_NOT_SATISFIABLE => Some(ranges.len() * 4 / 5),
+            StatusCode::SERVICE_UNAVAILABLE => Some(1),
+            _ => None,
+        };
+        if let Some(at_once) = refused.filter(|_| ranges.len() > 1) {
             drop(response);
             drop(permit);
-            self.serves_fewer(url, ranges.len() * 4 / 5);
+            self.serves_fewer(url, at_once);
             log::debug!("{url} refused {} ranges at once", ranges.len());
             let mut parts = Vec::with_capacity(ranges.len());
             let mut rest = ranges;
