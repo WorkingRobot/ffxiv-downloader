@@ -7,7 +7,10 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use reqwest::header::{HeaderValue, USER_AGENT};
 use xiv_core::file::version::GameVersion;
-use xiv_core::index::{Header, Origin, PatchType, Region, Repository, Source, Status, now};
+use xiv_core::index::{
+    Header, Origin, PatchType, REGISTRY_SCHEMA, Region, Registry, Repository, RepositoryRef,
+    Source, Status, now,
+};
 
 const PATCHER_AGENT: &str = "FFXIV PATCH CLIENT";
 const MAGIC: [u8; 12] = *b"\x91ZIPATCH\r\n\x1a\n";
@@ -27,6 +30,8 @@ pub enum IndexCommand {
     Liveness(LivenessArgs),
     /// Attach an archive.org item as a fallback source
     Archive(ArchiveArgs),
+    /// Rewrite the registry from the repository files
+    Registry(CheckArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -64,7 +69,45 @@ pub async fn run(args: IndexArgs, client: &Client) -> Result<()> {
         IndexCommand::Check(args) => check(args),
         IndexCommand::Liveness(args) => liveness(args, client).await,
         IndexCommand::Archive(args) => archive(args, client).await,
+        IndexCommand::Registry(args) => {
+            let written = write_registry(&args.path)?;
+            log::info!("{written} repositories registered");
+            Ok(())
+        }
     }
+}
+
+/// The registry is derived, never hand-kept: every repository file present is listed, so a
+/// repository added by a poll or a sweep is registered without a second step.
+pub fn write_registry(root: &std::path::Path) -> Result<usize> {
+    let mut repositories = Vec::new();
+    for path in repository_files(root)? {
+        let text = std::fs::read_to_string(&path)?;
+        let repository: Repository = serde_json::from_str(&text)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        repositories.push(RepositoryRef {
+            slug: repository.slug,
+            name: repository.name,
+            region: repository.region,
+            latest: repository.latest,
+        });
+    }
+    repositories.sort_by(|a, b| a.slug.cmp(&b.slug));
+    let count = repositories.len();
+    write_json(
+        &root.join("repositories.json"),
+        &Registry {
+            schema: REGISTRY_SCHEMA.to_string(),
+            repositories,
+        },
+    )?;
+    Ok(count)
+}
+
+fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(value)?;
+    text.push('\n');
+    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
 async fn archive(args: ArchiveArgs, client: &Client) -> Result<()> {

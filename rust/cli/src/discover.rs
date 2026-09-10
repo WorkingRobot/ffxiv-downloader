@@ -172,6 +172,7 @@ pub async fn run(args: DiscoverArgs, client: &Client) -> Result<()> {
         repository.patches.len(),
         repository.latest
     );
+    crate::index::write_registry(&args.index_path)?;
     Ok(())
 }
 

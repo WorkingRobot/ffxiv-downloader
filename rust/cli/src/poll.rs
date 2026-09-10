@@ -133,6 +133,7 @@ pub async fn run(args: PollArgs, client: &Client) -> Result<()> {
             repository.latest
         );
     }
+    crate::index::write_registry(&args.index_path)?;
     Ok(())
 }
 
