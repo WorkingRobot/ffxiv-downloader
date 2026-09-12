@@ -20,7 +20,7 @@ pub struct PollArgs {
     pub region: String,
     /// Directory holding repository files
     #[arg(short, long, value_name = "DIR", default_value = ".")]
-    pub index_path: PathBuf,
+    pub path: PathBuf,
     /// Repositories to create if absent, in the form slug=name
     #[arg(long, value_name = "SLUG=NAME", num_args = 0..)]
     pub repo: Vec<String>,
@@ -31,7 +31,7 @@ pub struct PollArgs {
 
 pub async fn run(args: PollArgs, client: &Client) -> Result<()> {
     let region = crate::index::parse_region(&args.region)?;
-    let mut repositories = load_region(&args.index_path, region, &args.repo)?;
+    let mut repositories = load_region(&args.path, region, &args.repo)?;
     if repositories.is_empty() {
         bail!("no repositories for {}", args.region);
     }
@@ -121,7 +121,7 @@ pub async fn run(args: PollArgs, client: &Client) -> Result<()> {
             repository.latest = last.clone();
         }
         repository.validate()?;
-        let path = crate::index::repos_dir(&args.index_path)?.join(format!("{}.json", repository.slug));
+        let path = crate::index::repos_dir(&args.path)?.join(format!("{}.json", repository.slug));
         let mut text = serde_json::to_string_pretty(&repository)?;
         text.push('\n');
         std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
@@ -133,7 +133,7 @@ pub async fn run(args: PollArgs, client: &Client) -> Result<()> {
             repository.latest
         );
     }
-    crate::index::write_registry(&args.index_path)?;
+    crate::index::write_registry(&args.path)?;
     Ok(())
 }
 

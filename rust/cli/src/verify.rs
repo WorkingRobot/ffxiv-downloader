@@ -19,7 +19,7 @@ pub struct VerifyArgs {
     pub slug: String,
     /// Directory holding repository files
     #[arg(short, long, value_name = "DIR", default_value = ".")]
-    pub index_path: PathBuf,
+    pub path: PathBuf,
     /// Directory holding the lut files for this repository
     #[arg(short, long, value_name = "DIR")]
     pub luts: PathBuf,
@@ -32,7 +32,7 @@ pub struct VerifyArgs {
 }
 
 pub fn run(args: VerifyArgs) -> Result<()> {
-    let path = crate::index::repos_dir(&args.index_path)?.join(format!("{}.json", args.slug));
+    let path = crate::index::repos_dir(&args.path)?.join(format!("{}.json", args.slug));
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let mut repository: Repository =

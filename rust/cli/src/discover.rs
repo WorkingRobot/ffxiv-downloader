@@ -23,7 +23,7 @@ pub struct DiscoverArgs {
     pub slug: String,
     /// Directory holding repository files
     #[arg(short, long, value_name = "DIR", default_value = ".")]
-    pub index_path: PathBuf,
+    pub path: PathBuf,
     /// Repository name, required when the repository file does not exist yet
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
@@ -40,7 +40,7 @@ pub struct DiscoverArgs {
     #[arg(long, value_name = "NUM", default_value_t = 2)]
     pub parts: u32,
     /// Number of requests to keep in flight
-    #[arg(short, long, value_name = "NUM", default_value_t = 8)]
+    #[arg(long, value_name = "NUM", default_value_t = 8)]
     pub parallelism: usize,
     /// Stop after this many requests
     #[arg(long, value_name = "NUM", default_value_t = 100_000)]
@@ -49,7 +49,7 @@ pub struct DiscoverArgs {
 
 pub async fn run(args: DiscoverArgs, client: &Client) -> Result<()> {
     let (slug, region) = crate::index::parse_slug(&args.slug)?;
-    let path = crate::index::repos_dir(&args.index_path)?.join(format!("{slug}.json"));
+    let path = crate::index::repos_dir(&args.path)?.join(format!("{slug}.json"));
     let mut repository = match load(&path)? {
         Some(repository) => repository,
         None => Repository {
@@ -172,7 +172,7 @@ pub async fn run(args: DiscoverArgs, client: &Client) -> Result<()> {
         repository.patches.len(),
         repository.latest
     );
-    crate::index::write_registry(&args.index_path)?;
+    crate::index::write_registry(&args.path)?;
     Ok(())
 }
 
