@@ -263,9 +263,9 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
             .filter_map(|url| archive_parts(url).map(|(item, _)| item))
             .collect::<std::collections::BTreeSet<_>>()
         {
-            if !archives.contains_key(&item) {
-                let listed = archive_item(client, &item).await;
-                archives.insert(item, listed);
+            if let std::collections::btree_map::Entry::Vacant(slot) = archives.entry(item) {
+                let listed = archive_item(client, slot.key()).await;
+                slot.insert(listed);
             }
         }
 
