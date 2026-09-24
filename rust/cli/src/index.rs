@@ -197,7 +197,56 @@ async fn archive(args: ArchiveArgs, client: &Client) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Probe {
+    Alive,
+    Dead,
+    /// The host answered, but not about whether the file exists.
+    Unknown,
+}
+
+/// archive.org answers 500 for a missing file and 503 for a missing item, so a HEAD can never
+/// tell absence from a bad minute. The item's own metadata lists every file it holds.
+async fn archive_item(client: &Client, item: &str) -> Option<std::collections::BTreeSet<String>> {
+    let body = client
+        .get(format!("https://archive.org/metadata/{item}"))
+        .header(USER_AGENT, HeaderValue::from_static(PATCHER_AGENT))
+        .send()
+        .await
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    let files = body.get("files")?.as_array()?;
+    Some(
+        files
+            .iter()
+            .filter_map(|file| Some(file.get("name")?.as_str()?.to_string()))
+            .collect(),
+    )
+}
+
+fn archive_parts(url: &str) -> Option<(String, String)> {
+    let (item, path) = url.split_once("/download/")?.1.split_once('/')?;
+    Some((item.to_string(), path.to_string()))
+}
+
+async fn head_probe(client: &Client, url: &str) -> Probe {
+    match client
+        .head(url)
+        .header(USER_AGENT, HeaderValue::from_static(PATCHER_AGENT))
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => Probe::Alive,
+        Ok(response) if matches!(response.status().as_u16(), 404 | 410) => Probe::Dead,
+        _ => Probe::Unknown,
+    }
+}
+
 async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
+    let mut archives: BTreeMap<String, Option<std::collections::BTreeSet<String>>> =
+        BTreeMap::new();
     for path in repository_files(&args.path)? {
         let text = std::fs::read_to_string(&path)?;
         let mut repository: Repository = serde_json::from_str(&text)
@@ -208,27 +257,49 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
             .values()
             .flat_map(|entry| entry.sources.values().map(|source| source.url.clone()))
             .collect();
-        let alive: BTreeMap<String, bool> = stream::iter(urls.into_iter().map(|url| async move {
-            let ok = client
-                .head(&url)
-                .header(USER_AGENT, HeaderValue::from_static(PATCHER_AGENT))
-                .send()
-                .await
-                .map(|response| response.status().is_success())
-                .unwrap_or(false);
-            (url, ok)
-        }))
-        .buffer_unordered(args.parallelism)
-        .collect()
-        .await;
+
+        for item in urls
+            .iter()
+            .filter_map(|url| archive_parts(url).map(|(item, _)| item))
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            if !archives.contains_key(&item) {
+                let listed = archive_item(client, &item).await;
+                archives.insert(item, listed);
+            }
+        }
+
+        let probed: BTreeMap<String, Probe> =
+            stream::iter(urls.into_iter().map(|url| {
+                let archives = &archives;
+                async move {
+                    let probe = match archive_parts(&url) {
+                        Some((item, file)) => match archives.get(&item).and_then(Option::as_ref) {
+                            Some(listed) if listed.contains(&file) => Probe::Alive,
+                            Some(_) => Probe::Dead,
+                            None => Probe::Unknown,
+                        },
+                        None => head_probe(client, &url).await,
+                    };
+                    (url, probe)
+                }
+            }))
+            .buffer_unordered(args.parallelism)
+            .collect()
+            .await;
 
         let stamp = now();
         let mut changed = 0;
+        let mut unknown = 0;
         for entry in repository.patches.values_mut() {
             for source in entry.sources.values_mut() {
-                let status = match alive.get(&source.url) {
-                    Some(true) => Status::Alive,
-                    Some(false) => Status::Dead,
+                let status = match probed.get(&source.url) {
+                    Some(Probe::Alive) => Status::Alive,
+                    Some(Probe::Dead) => Status::Dead,
+                    Some(Probe::Unknown) => {
+                        unknown += 1;
+                        continue;
+                    }
                     None => continue,
                 };
                 if source.status == status {
@@ -251,7 +322,7 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
             .filter(|(_, entry)| entry.sources.values().all(|s| s.status == Status::Dead))
             .count();
         log::info!(
-            "{}: {changed} changed, {dead} of {} unreachable",
+            "{}: {changed} changed, {unknown} inconclusive, {dead} of {} unreachable",
             repository.slug,
             repository.patches.len()
         );
