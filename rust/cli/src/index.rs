@@ -269,7 +269,7 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
             }
         }
 
-        let probed: BTreeMap<String, Probe> =
+        let mut probed: BTreeMap<String, Probe> =
             stream::iter(urls.into_iter().map(|url| {
                 let archives = &archives;
                 async move {
@@ -287,6 +287,39 @@ async fn liveness(args: LivenessArgs, client: &Client) -> Result<()> {
             .buffer_unordered(args.parallelism)
             .collect()
             .await;
+
+        let disputed: Vec<String> = repository
+            .patches
+            .values()
+            .flat_map(|entry| entry.sources.values())
+            .filter(|source| {
+                archive_parts(&source.url).is_none()
+                    && match probed.get(&source.url) {
+                        Some(Probe::Alive) => source.status != Status::Alive,
+                        Some(Probe::Dead) => source.status != Status::Dead,
+                        _ => false,
+                    }
+            })
+            .map(|source| source.url.clone())
+            .collect();
+
+        // SE's CDN has answered 200 for a patch that is 404 from every other vantage point, so one
+        // disagreeing probe is not enough to rewrite a status.
+        let confirmed: BTreeMap<String, Probe> = stream::iter(
+            disputed
+                .into_iter()
+                .map(|url| async move { (head_probe(client, &url).await, url) }),
+        )
+        .buffer_unordered(args.parallelism)
+        .map(|(probe, url)| (url, probe))
+        .collect()
+        .await;
+
+        for (url, again) in confirmed {
+            if probed.get(&url) != Some(&again) {
+                probed.insert(url, Probe::Unknown);
+            }
+        }
 
         let stamp = now();
         let mut changed = 0;
